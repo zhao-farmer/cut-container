@@ -1,0 +1,38 @@
+{
+  "name": "cut-container",
+  "version": "1.0.0",
+  "description": "CutContainer — 剪映风格 Web Components 视频编辑器，支持 npm 安装与 CDN 直引（Vue / React / Svelte / Solid / 原生）",
+  "license": "MIT",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "build:lib": "vite build --config vite.lib.config.ts && node scripts/build-lib-assets.mjs",
+    "pack:lib": "npm pack ./npm-build-dist --dry-run",
+    "publish:lib": "npm run build:lib && npm publish ./npm-build-dist",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "mediabunny": "1.50.8",
+    "pixi.js": "8.12.0"
+  },
+  "devDependencies": {
+    "@sveltejs/vite-plugin-svelte": "^3.0.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "esbuild": "^0.21.5",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "solid-js": "^1.8.0",
+    "svelte": "^4.2.0",
+    "svelte-preprocess": "^6.0.5",
+    "typescript": "^5.9.3",
+    "vite": "^5.0.0",
+    "vite-plugin-solid": "^2.8.0",
+    "vue": "^3.4.0"
+  }
+}

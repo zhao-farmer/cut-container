@@ -1,0 +1,180 @@
+/* ============================================================
+ *  编辑器 · 总背景 / 主题 / 外壳
+ *  - 主题变量（素材 / 播放器 / 详情 / 轨道共用；Web 字体改由后端提供）
+ *  - 编辑器外壳布局（.ed-shell / 三分栏 / 拖拽分隔条）
+ *  - 通用件：toast、弹窗壳、细滚动条、导出进度遮罩
+ *  父应用标题栏与文档弹窗见 src/parent-demos/parent.css
+ * ============================================================ */
+
+/* ============================================================
+ *  剪映风格编辑器 —— 全局灰黑主题（4 个父应用 + 标题栏共用）
+ * ============================================================ */
+/* 宿主元素自带字体/文字色：脱离 demo 页面/父应用 CSS 单独引入时
+   不会回退到宋体，也不会继承页面默认黑字（深色底上看不清） */
+:host {
+  display: block;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  color: #d8d8dc;
+}
+button, input, select, textarea { font-family: inherit; }
+
+/* 主题变量必须同时挂到 :host（Shadow DOM 内 :root 不生效）与 :root（父页面 light DOM） */
+:host,
+:root {
+  --ed-bg: #171718;
+  --ed-panel: #262628;
+  --ed-panel-hi: #2c2c2f;
+  --ed-deep: #1c1c1e;
+  --ed-black: #0a0a0a;
+  --ed-border: #3a3a3e;
+  --ed-border-soft: #2f2f33;
+  --ed-text: #d8d8dc;
+  --ed-muted: #8b8b93;
+  --ed-accent: #18b9d4;
+  --ed-accent-dark: #0e8ca3;
+}
+
+/* ---------- Web 字体 ----------
+ * 字体文件已迁移到后端（imitate-node/static/fonts），由后端素材目录下发、
+ * 前端启动时用 FontFace 注册（见 editor/utils/customFonts.ts），
+ * 因此这里不再声明写死本地路径的 @font-face。
+ */
+
+.ed-shell {
+  display: flex; flex-direction: column; min-width: 1000px; height: 100%; position: relative;
+  /* height:100% + padding 必须是 border-box，否则外壳上下各 8px 会把时间轴卡片（含底部横滚条）挤出可视区域被裁切 */
+  box-sizing: border-box;
+  padding: 8px;
+  background: var(--ed-bg); font-size: 13px;
+  /* 可拖拽分隔条调整的模块尺寸 */
+  --ed-left-w: 320px;
+  --ed-right-w: 300px;
+  /* 标尺带高 30px（剪映实测，帧提示纳入标尺区域），时间轴总高同步，泳道可用高度守恒 */
+  --ed-tl-h: 248px;
+}
+.ed-main { flex: 1; display: flex; min-height: 0; }
+
+/* 四个模块统一为悬浮圆角卡片 */
+.ed-left, .ed-center, .ed-right, .ed-timeline {
+  border: 1px solid var(--ed-border-soft);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* 可拖拽间隙（左|中、中|右 竖向；播放器|轨道 横向），平时与底色融为一体 */
+.ed-split-h, .ed-split-v {
+  flex: none; position: relative; z-index: 20;
+  background: var(--ed-bg);
+}
+.ed-split-h { width: 8px; cursor: ew-resize; }
+.ed-split-v { height: 8px; cursor: ns-resize; }
+.ed-split-h::after, .ed-split-v::after {
+  content: ''; position: absolute; border-radius: 2px; background: transparent;
+  transition: background .12s;
+}
+.ed-split-h::after { top: 8px; bottom: 8px; left: 3px; right: 3px; }
+.ed-split-v::after { left: 8px; right: 8px; top: 3px; bottom: 3px; }
+/* 抓取热区向两侧外扩 8px（透明、不可见）：左右两栏内部都有原生滚动条且紧贴
+   分隔条，8px 视觉条极易按偏到滚动条上（按中滚动条只会滚列表、面板宽度不
+   变）；热区扩大后近边缘一律优先命中分隔条。::after 青线视觉位置不变。 */
+.ed-split-h::before, .ed-split-v::before {
+  content: ''; position: absolute;
+}
+.ed-split-h::before { top: 0; bottom: 0; left: -8px; right: -8px; }
+.ed-split-v::before { left: 0; right: 0; top: -8px; bottom: -8px; }
+.ed-split-h:hover::after, .ed-split-h.dragging::after,
+.ed-split-v:hover::after, .ed-split-v.dragging::after { background: var(--ed-accent); }
+.ed-shell.is-resizing { user-select: none; }
+.ed-shell.is-resizing cut-container { pointer-events: none; }
+
+/* ---------- 轻提示 toast ---------- */
+.ed-toast {
+  position: fixed; left: 50%; bottom: 60px; z-index: 70;
+  transform: translate(-50%, 10px);
+  background: rgba(20,20,24,.94); color: #e8e8ec;
+  border: 1px solid #454549; border-radius: 7px;
+  padding: 8px 16px; font-size: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.5);
+  opacity: 0; pointer-events: none;
+  transition: opacity .2s ease, transform .2s ease;
+}
+.ed-toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* 细滚动条（WebKit） */
+.ed-tabpanel::-webkit-scrollbar, .ed-right-body::-webkit-scrollbar { width: 8px; }
+.ed-tabpanel::-webkit-scrollbar-thumb, .ed-right-body::-webkit-scrollbar-thumb {
+  background: #3d3d42; border-radius: 4px;
+}
+.ed-tabpanel::-webkit-scrollbar-track, .ed-right-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ===== 标题栏弹窗（使用文档 / 关于） ===== */
+.ed-modal-mask {
+  position: fixed; inset: 0; z-index: 2000;
+  background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center;
+}
+.ed-modal {
+  width: 440px; max-width: calc(100vw - 40px); max-height: calc(100vh - 80px);
+  display: flex; flex-direction: column;
+  background: var(--ed-panel); border: 1px solid var(--ed-border); border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0,0,0,.55); overflow: hidden;
+}
+.ed-modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px; border-bottom: 1px solid var(--ed-border);
+}
+.ed-modal-title { font-size: 13px; font-weight: 600; color: #fff; letter-spacing: .5px; }
+.ed-modal-x {
+  width: 26px; height: 26px; padding: 0; border: 0; border-radius: 5px;
+  background: transparent; color: var(--ed-muted); font-size: 17px; line-height: 1; cursor: pointer;
+}
+.ed-modal-x:hover { background: #3a3a40; color: #fff; }
+
+/* ===== 成片导出进度遮罩（文件 → 导出视频） ===== */
+.ed-export-mask {
+  /* 覆盖编辑器根节点（而不是整个浏览器窗口）：弹窗与编辑器区域同心，
+     不会被顶部标题栏高度带偏 */
+  position: absolute; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 10, 12, 0.62);
+}
+.ed-export-card {
+  width: 360px; box-sizing: border-box;
+  padding: 22px 24px 18px;
+  background: var(--ed-panel);
+  border: 1px solid var(--ed-border);
+  border-radius: 10px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+.ed-export-title {
+  font-size: 15px; font-weight: 700; color: var(--ed-text);
+  letter-spacing: 1px; margin-bottom: 10px;
+}
+.ed-export-desc { font-size: 12px; color: var(--ed-muted); margin-bottom: 12px; min-height: 16px; }
+.ed-export-bar {
+  height: 6px; border-radius: 3px; overflow: hidden;
+  background: rgba(255, 255, 255, 0.1);
+}
+.ed-export-bar > i {
+  display: block; height: 100%; width: 0;
+  background: var(--ed-accent); border-radius: 3px;
+  transition: width .12s linear;
+}
+.ed-export-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-top: 12px;
+}
+.ed-export-pct {
+  font-size: 12px; color: var(--ed-text);
+  font-variant-numeric: tabular-nums;
+}
+.ed-export-cancel {
+  height: 26px; padding: 0 14px;
+  background: transparent; color: var(--ed-text);
+  border: 1px solid #4a4a4e; border-radius: 4px;
+  font-size: 12px; cursor: pointer;
+}
+.ed-export-cancel:hover { border-color: var(--ed-accent); color: var(--ed-accent); }
+.ed-export-cancel:disabled { opacity: 0.5; cursor: default; }

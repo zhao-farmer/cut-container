@@ -1,0 +1,320 @@
+/* ============================================================
+ *  编辑器 · 播放器区域（中间）
+ *  播放器外壳与底栏 / 画面比例与画质弹层 / 导航小窗 /
+ *  全屏控制条 / 画面操作框 / 文字原位编辑 / 格子电平表
+ * ============================================================ */
+
+/* 中间预览区（剪映式播放器：标题栏/画面/底栏由 MediaBunnyPlayer 内部渲染） */
+.ed-center { flex: 1; display: flex; flex-direction: column; min-width: 440px; background: #000; }
+.ed-stage { flex: 1; min-height: 0; position: relative; background: #1d1d20; overflow: hidden; }
+.ed-stage cut-container { display: block; width: 100%; height: 100%; }
+
+/* ===== 剪映式播放器 ===== */
+.jy-player { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; background: var(--ed-panel); color: #d6d6dc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif; user-select: none; }
+.jy-player.is-fullscreen { background: #000; }
+/* 全屏＝简易播放器：隐藏标题栏与常规底栏，画面区铺满；底部悬浮控制条接管 */
+.jy-player.is-fullscreen .jy-head,
+.jy-player.is-fullscreen .jy-bar { display: none; }
+/* 全屏下不做画面变换编辑：隐藏操作框覆盖层（.tf-layer 本会铺满画面并吞掉指针） */
+.jy-player.is-fullscreen .tf-layer { display: none; }
+/* 全屏使用独立简易控制条（无填充按钮），隐藏导航小窗避免与其重叠 */
+.jy-player.is-fullscreen .jy-nav { display: none !important; }
+/* 标题栏 */
+.jy-head { flex: none; height: 40px; display: flex; align-items: center; padding: 0 12px; border-bottom: 1px solid var(--ed-border); }
+.jy-title { font-size: 14px; font-weight: 600; color: #f2f2f5; letter-spacing: .5px; }
+/* 画面区 */
+/* 画面区底色为面板深灰：pixi 画布除 16:9 黑色画面区外保持透明，露出此底色；
+   全屏时 .jy-player.is-fullscreen 为黑底，信箱区随之变黑 */
+.jy-stage { flex: 1; min-height: 0; position: relative; background: #1d1d20; overflow: hidden; cursor: pointer; }
+.jy-stage canvas { display: block; }
+/* 素材选中预览进度条（仅预览模式显示；与参考图一致：细暗轨 + 小竖条拇指） */
+.jy-scrub { flex: none; padding: 0 10px; background: #1d1d20; }
+.jy-seek {
+  -webkit-appearance: none; appearance: none;
+  display: block; width: 100%; height: 24px; margin: 0;
+  background: transparent; cursor: pointer;
+  /* 已播放进度（updateTimeUI 写入 --seek-pos），未播放段保持深灰 */
+  --seek-pos: 0%;
+}
+.jy-seek::-webkit-slider-runnable-track {
+  height: 6px; border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    #c9c9cf 0,
+    #c9c9cf var(--seek-pos),
+    #232326 var(--seek-pos),
+    #232326 100%
+  );
+}
+.jy-seek::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 7px; height: 16px; margin-top: -5px;
+  border: none; border-radius: 2px; background: #6c6c72;
+}
+.jy-seek:hover::-webkit-slider-thumb { background: #9a9aa1; }
+.jy-seek::-moz-range-track { height: 6px; background: #232326; border-radius: 2px; }
+.jy-seek::-moz-range-progress { height: 6px; background: #c9c9cf; border-radius: 2px; }
+.jy-seek::-moz-range-thumb { width: 7px; height: 16px; border: none; border-radius: 2px; background: #6c6c72; }
+.jy-loading {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  color: #fff; font-size: 13px; background: rgba(0,0,0,.6); padding: 8px 16px; border-radius: 20px; pointer-events: none;
+}
+.jy-error {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  color: #ff9a9a; font-size: 12px; background: rgba(40,0,0,.88); padding: 10px 16px; border-radius: 8px;
+  max-width: 80%; text-align: center; line-height: 1.6; cursor: default;
+}
+/* 底栏 */
+.jy-bar { flex: none; height: 40px; display: flex; align-items: center; padding: 0 14px; border-top: 1px solid var(--ed-border); }
+.jy-bar-left, .jy-bar-right { flex: 1 1 0; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.jy-bar-right { justify-content: flex-end; }
+.jy-bar-center { flex: none; }
+.jy-time-cur, .jy-time-dur { font-family: Consolas, 'SFMono-Regular', Menlo, monospace; font-size: 12px; letter-spacing: .3px; }
+.jy-time-cur { color: var(--ed-accent, #18b9d4); }
+.jy-time-dur { color: rgba(255,255,255,.82); }
+/* 图标按钮 */
+.jy-icon-btn, .jy-play {
+  border: 0; background: transparent; padding: 0; cursor: pointer; color: #c8cad2;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 5px;
+}
+.jy-icon-btn { width: 28px; height: 28px; }
+.jy-play { width: 30px; height: 30px; color: #f0f0f4; }
+.jy-icon-btn svg { width: 18px; height: 18px; }
+.jy-play svg { width: 22px; height: 22px; }
+.jy-icon-btn:hover, .jy-play:hover { color: #fff; background: rgba(255,255,255,.12); }
+.jy-icon-btn.is-on, .jy-chip.is-on { color: var(--ed-accent, #18b9d4); border-color: var(--ed-accent, #18b9d4); }
+/* 描边文字按钮（原画 / 16:9） */
+.jy-chip {
+  height: 20px; min-width: 40px; padding: 0 8px; margin: 0 2px;
+  border: 1px solid rgba(255,255,255,.45); border-radius: 3px; background: transparent;
+  color: #e8e8ee; font-size: 10px; line-height: 1; cursor: pointer;
+}
+.jy-chip:hover { border-color: #fff; color: #fff; }
+
+/* ===== 底栏弹出菜单（画面比例 / 播放画质） ===== */
+.jy-pop {
+  position: fixed; z-index: 1000; min-width: 188px; max-width: 280px;
+  padding: 6px 0; border-radius: 8px;
+  background: #2b2b2e; border: 1px solid rgba(255,255,255,.08);
+  box-shadow: 0 10px 28px rgba(0,0,0,.5);
+  color: #e6e6ea; font-size: 12px;
+}
+.jy-pop-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 14px; cursor: pointer; white-space: nowrap;
+}
+.jy-pop-item:hover { background: rgba(255,255,255,.07); }
+/* 不可用项（如空轨道时的「原始比例」）：置灰且不响应点击/悬停 */
+.jy-pop-item.is-disabled { opacity: .38; cursor: default; pointer-events: none; }
+.jy-pop-check {
+  flex: none; width: 14px; color: var(--ed-accent, #18b9d4);
+  visibility: hidden; font-size: 12px; line-height: 1;
+}
+.jy-pop-item.is-active .jy-pop-check { visibility: visible; }
+.jy-pop-label { flex: 1 1 auto; color: #ececf0; line-height: 1.3; }
+/* 画质项：标题 + 灰色副标题两行 */
+.jy-pop-text { flex: 1 1 auto; display: flex; flex-direction: column; gap: 2px; }
+.jy-pop-sub { font-size: 10px; line-height: 1.3; color: rgba(255,255,255,.45); }
+/* 比例项右侧的朝向小图标（16×16 框内描边矩形） */
+.jy-pop-glyph {
+  flex: none; width: 18px; display: inline-flex; align-items: center; justify-content: center;
+}
+.jy-pop-glyph i {
+  display: block; border: 1.5px solid #cfcfcf; border-radius: 2px;
+  background: rgba(255,255,255,.10);
+}
+.jy-pop-divider { height: 1px; margin: 6px 0; background: rgba(255,255,255,.10); }
+/* 画面填充缩放弹层：放大镜− 滑杆 放大镜+（图标 / 细轨白圆点样式与时间轴缩放控件一致，
+   图标与滑杆之间保留默认间距） */
+.jy-pop-zoom {
+  min-width: 0; padding: 8px 12px;
+  display: flex; align-items: center; gap: 10px;
+}
+/* 图标按钮：与 .ed-tl-btn 同款透明底放大镜 */
+.jz-btn {
+  flex: none; width: 24px; height: 24px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 0; border-radius: 4px; background: transparent;
+  color: #c2c2ca; cursor: pointer;
+}
+.jz-btn svg { width: 16px; height: 16px; }
+.jz-btn:hover { color: #fff; background: rgba(255,255,255,.10); }
+/* 滑杆：同 .ed-tl-range 细轨 + 白圆点，弹层内略宽 */
+.jz-range {
+  -webkit-appearance: none; appearance: none;
+  flex: none; width: 150px; height: 3px; border-radius: 2px;
+  background: #4a4a50; outline: none; cursor: pointer; margin: 0;
+}
+.jz-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: #e8e8ec; border: 0; cursor: pointer;
+}
+.jz-range::-webkit-slider-thumb:hover { background: var(--ed-accent, #18b9d4); }
+.jz-range::-moz-range-thumb {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: #e8e8ec; border: 0; cursor: pointer;
+}
+.jz-range::-moz-range-thumb:hover { background: var(--ed-accent, #18b9d4); }
+.jz-range::-moz-range-track { height: 3px; border-radius: 2px; background: #4a4a50; }
+
+/* ===== 画面填充：放大预览时右下角导航小窗 ===== */
+.jy-nav {
+  position: absolute; right: 10px; bottom: 10px; z-index: 7;
+  padding: 5px; border-radius: 5px;
+  background: rgba(24,24,26,.78); border: 1px solid rgba(255,255,255,.14);
+}
+.jy-nav-frame {
+  position: relative; overflow: hidden;
+  background: rgba(255,255,255,.16);
+  touch-action: none; cursor: pointer;
+}
+.jy-nav-view {
+  position: absolute; box-sizing: border-box;
+  border: 1.5px solid var(--ed-accent, #18b9d4);
+  background: rgba(24,185,212,.18);
+  cursor: pointer;
+}
+/* 放大后空白画面抓手光标（命中素材仍由操作框显示 move 光标） */
+.jy-stage.is-zoomed { cursor: grab; }
+.jy-stage.is-panning, .jy-stage.is-panning .tf-layer { cursor: grabbing !important; }
+
+/* ===== 全屏简易播放控制条（仅 .is-fullscreen 时显示，悬浮于画面底部） ===== */
+.jy-fsbar {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: none; align-items: center; gap: 16px;
+  padding: 26px 28px 18px;
+  background: linear-gradient(to top, rgba(0,0,0,.62), rgba(0,0,0,0));
+  cursor: default;
+}
+.jy-player.is-fullscreen .jy-fsbar { display: flex; }
+.jy-fs-play, .jy-fs-exit {
+  flex: none; border: 0; background: transparent; padding: 0; cursor: pointer;
+  color: #f4f4f7; display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+}
+.jy-fs-play { width: 34px; height: 34px; }
+.jy-fs-play svg { width: 26px; height: 26px; }
+.jy-fs-exit { width: 32px; height: 32px; }
+.jy-fs-exit svg { width: 22px; height: 22px; }
+.jy-fs-play:hover, .jy-fs-exit:hover { color: #fff; background: rgba(255,255,255,.14); }
+/* 时间：当前（青） / 总时长（白） */
+.jy-fs-time {
+  flex: none; display: inline-flex; align-items: baseline; gap: 7px;
+  font-family: Consolas, 'SFMono-Regular', Menlo, monospace; font-size: 13px; letter-spacing: .4px;
+}
+.jy-fs-tcur { color: var(--ed-accent, #18b9d4); }
+.jy-fs-sep { color: rgba(255,255,255,.45); }
+.jy-fs-tdur { color: rgba(255,255,255,.88); }
+/* 可拖拽进度条：轨道带上下扩展热区，填充青色，拇指白圈 */
+.jy-fs-track {
+  position: relative; flex: 1; min-width: 80px; height: 20px;
+  display: flex; align-items: center; cursor: pointer; touch-action: none;
+}
+.jy-fs-line, .jy-fs-fill {
+  position: absolute; left: 0; height: 3px; border-radius: 2px; pointer-events: none;
+}
+.jy-fs-line { right: 0; background: rgba(255,255,255,.28); }
+.jy-fs-fill { width: 0; background: var(--ed-accent, #18b9d4); }
+.jy-fs-thumb {
+  position: absolute; left: 0; top: 50%; width: 13px; height: 13px;
+  margin: -6.5px 0 0 -6.5px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 0 2px rgba(0,0,0,.28); pointer-events: none;
+  transition: transform .08s ease;
+}
+.jy-fs-track:hover .jy-fs-thumb,
+.jy-fs-track.is-drag .jy-fs-thumb { transform: scale(1.18); }
+/* 进度条与退出钮之间的竖分隔线 */
+.jy-fs-vsep { flex: none; width: 1px; height: 22px; background: rgba(255,255,255,.32); }
+
+/* ============ 播放器画面操作框（画面元素选中态） ============ */
+.tf-layer {
+  position: absolute; inset: 0; z-index: 6;
+  touch-action: none;
+}
+.tf-layer.is-drag { user-select: none; }
+.tf-box {
+  position: absolute; display: none;
+  border: 1.5px solid #fff;
+  box-sizing: border-box;
+  /* 手柄可溢出框体（旋转柄在上方），边框自身不接收指针（由覆盖层统一命中） */
+  pointer-events: none;
+}
+.tf-box.is-on { display: block; pointer-events: auto; }
+
+.tf-handle {
+  position: absolute; width: 10px; height: 10px;
+  background: #fff; border: 1px solid rgba(0,0,0,.28);
+  border-radius: 2px; box-sizing: border-box;
+  transform: translate(-50%, -50%);
+}
+.tf-h-tl { left: 0; top: 0; cursor: nwse-resize; }
+.tf-h-tc { left: 50%; top: 0; cursor: ns-resize; }
+.tf-h-tr { left: 100%; top: 0; cursor: nesw-resize; }
+.tf-h-cl { left: 0; top: 50%; cursor: ew-resize; }
+.tf-h-cr { left: 100%; top: 50%; cursor: ew-resize; }
+.tf-h-bl { left: 0; top: 100%; cursor: nesw-resize; }
+.tf-h-bc { left: 50%; top: 100%; cursor: ns-resize; }
+.tf-h-br { left: 100%; top: 100%; cursor: nwse-resize; }
+
+/* 旋转手柄：框上方圆点 + 连线 */
+.tf-rotate {
+  position: absolute; left: 50%; top: -32px;
+  width: 12px; height: 12px; border-radius: 50%;
+  background: #fff; border: 1px solid rgba(0,0,0,.28);
+  transform: translateX(-50%);
+  cursor: grab;
+}
+.tf-rotate-line {
+  position: absolute; left: 50%; top: 100%;
+  width: 1px; height: 20px; background: #fff;
+  transform: translateX(-50%);
+}
+.tf-layer.is-drag .tf-rotate { cursor: grabbing; }
+
+/* ===== 播放器内文字原位编辑（双击文字进入） ===== */
+.tf-text-edit {
+  position: absolute; z-index: 2;
+  margin: 0; padding: 4px 6px;
+  box-sizing: border-box;
+  /* 原位编辑：无框无底，文字直接在画面上改（仅 caret 提示） */
+  background: transparent;
+  border: none;
+  outline: none; resize: none;
+  text-align: center;
+  /* 与画面文字一致：超长不折行，仅回车物理换行；任何方向都不出滚动条（框随内容生长） */
+  white-space: pre;
+  overflow: hidden;
+  touch-action: auto;
+  pointer-events: auto;
+}
+.tf-text-edit::selection { background: rgba(255, 255, 255, .3); }
+
+/* 原位编辑态：保留选中框 / 控制点 / 旋转柄（剪映口径，仅展示；拖拽手势由覆盖层 JS 屏蔽）。
+   文字本体由 PIXI 表面原位渲染，输入框文字透明，只露出青色光标与选区。 */
+.tf-layer.is-texting .tf-box,
+.tf-layer.is-texting .tf-handle,
+.tf-layer.is-texting .tf-rotate { pointer-events: none; }
+
+/* ===== 底栏格子电平表（时间线含音频时常驻，播放时跳动 / 暂停时全灭） ===== */
+.jy-level {
+  display: inline-flex; flex-direction: row; align-items: center;
+  gap: 3px; margin-left: 2px; align-self: center;
+  cursor: pointer;
+}
+.jy-level[hidden] { display: none; }
+
+/* 格子电平表关闭竖井电平表：第五模块与其左侧分隔条一起隐藏，时间轴区自动占满 */
+.ed-shell.is-vu-hidden .ed-vumeter,
+.ed-shell.is-vu-hidden [data-split="vumeter"] { display: none; }
+/* 每声道一列竖格，column-reverse 使格子从下往上点亮（横条 10×2 堆叠） */
+.jy-level-col { display: flex; flex-direction: column-reverse; gap: 1px; }
+.jy-level-cell {
+  width: 10px; height: 2px;
+  background: rgba(255, 255, 255, 0.16);
+}
+.jy-level-cell.is-on.lv0,
+.jy-level-cell.is-on.lv1,
+.jy-level-cell.is-on.lv2 { background: #29c241; }
+.jy-level-cell.is-on.lv3 { background: #ff8800; }
+.jy-level-cell.is-on.lv4 { background: #ff2222; }

@@ -1,0 +1,230 @@
+/* ============================================================
+ *  编辑器 · 轨道区域（底部）
+ *  工具条 / 时间轴画布 / 轨道头 / 封面按钮弹窗 /
+ *  底部行（轨道 + 竖井电平表）
+ * ============================================================ */
+
+/* 底部时间轴（工具条对齐剪映：深色细边 + 线性图标 + hover 中文气泡） */
+.ed-timeline { height: var(--ed-tl-h); flex: none; display: flex; flex-direction: column; background: var(--ed-deep); overflow: visible; border-bottom: 0; }
+.ed-tl-toolbar {
+  height: 30px; flex: none;
+  display: flex; align-items: center; gap: 2px; padding: 0 10px;
+  background: var(--ed-panel);
+  border-radius: 10px 10px 0 0;
+}
+.ed-tl-group { display: flex; align-items: center; gap: 1px; }
+.ed-tl-btn {
+  position: relative;
+  width: 24px; height: 24px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border-radius: 4px; color: #c2c2ca;
+  border: 0; background: transparent; cursor: pointer;
+}
+.ed-tl-btn svg { width: 16px; height: 16px; }
+.ed-tl-btn:hover { background: #35353b; color: #fff; }
+.ed-tl-btn:active { background: #3d3d44; }
+/* 禁用态：无选中素材 / 历史栈为空 */
+.ed-tl-btn:disabled { opacity: .32; cursor: not-allowed; background: transparent; }
+.ed-tl-btn:disabled:hover { background: transparent; color: #c2c2ca; }
+.ed-tl-btn:disabled[data-tip]::after { display: none; }
+/* 开关态（磁吸）：剪映蓝。背景块相对按钮四周内缩 2px（与图标拉开距离） */
+.ed-tl-btn.is-on { background: transparent; color: #0b2228; }
+.ed-tl-btn.is-on::before {
+  content: ''; position: absolute; inset: 2px;
+  border-radius: 4px; background: var(--ed-accent);
+}
+.ed-tl-btn.is-on:hover::before { background: #2fc6df; }
+.ed-tl-btn.is-on svg { position: relative; z-index: 1; }
+/* hover 中文提示气泡 */
+.ed-tl-btn[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; bottom: calc(100% + 5px);
+  transform: translateX(-50%) translateY(2px);
+  background: rgba(28,28,32,.96); color: #ececf0;
+  border: 1px solid #45454a; border-radius: 4px;
+  padding: 2px 8px; font-size: 11px; line-height: 1.5;
+  white-space: nowrap; pointer-events: none; z-index: 80;
+  opacity: 0; transition: opacity .12s ease, transform .12s ease;
+}
+.ed-tl-btn[data-tip]:hover::after { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* 最右侧按钮的气泡改为右对齐，避免超出视口被裁切 */
+.ed-tl-zoom .ed-tl-btn:last-child[data-tip]::after {
+  left: auto; right: 0; transform: translateY(2px);
+}
+.ed-tl-zoom .ed-tl-btn:last-child[data-tip]:hover::after { transform: translateY(0); }
+.ed-tl-sep { width: 1px; height: 16px; background: #3a3a3e; margin: 0 6px; }
+.ed-tl-spacer { flex: 1; }
+/* 缩放组：缩小 · 滑杆 · 放大 */
+.ed-tl-zoom { display: flex; align-items: center; gap: 3px; }
+.ed-tl-range {
+  -webkit-appearance: none; appearance: none;
+  width: 88px; height: 3px; border-radius: 2px;
+  background: #4a4a50; outline: none; cursor: pointer; margin: 0 2px;
+}
+.ed-tl-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 11px; height: 11px; border-radius: 50%;
+  background: #e8e8ec; border: 0; cursor: pointer;
+}
+.ed-tl-range::-webkit-slider-thumb:hover { background: var(--ed-accent); }
+.ed-tl-range::-moz-range-thumb {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: #e8e8ec; border: 0; cursor: pointer;
+}
+.ed-tl-range::-moz-range-thumb:hover { background: var(--ed-accent); }
+.ed-tl-canvas { flex: 1; min-height: 0; position: relative; background: #101012; border-radius: 0 0 10px 10px; overflow: hidden; }
+/* 左右布局：canvas 只占右侧画布区（position/left 由 JS 内联 = headWidth），
+   宽高由 pixi 按 renderer 尺寸内联，不能再用 100% !important 覆盖 */
+.ed-tl-canvas canvas { display: block; }
+/* 拖动素材 / 拖裁时的时间提示 */
+.ed-tl-hint {
+  position: absolute; z-index: 20; pointer-events: none;
+  background: rgba(20,20,24,.92); border: 1px solid #45454a; color: #e8e8ec;
+  font-size: 10px; line-height: 1.4; padding: 2px 6px; border-radius: 4px;
+  white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+
+/* ---------- 左侧轨道头列（参考 asconfig handle-track） ---------- */
+.ed-tl-head {
+  position: absolute; left: 0; top: 0; bottom: 0; width: 90px; z-index: 10;
+  background: var(--tl-bg, #101012);
+  border-right: 1px solid var(--tl-divider, #2a2a30);
+  overflow: hidden;
+}
+/* 顶部标尺区（高度对齐 timelineHeight）：div 保留用于布局占位，不展示任何样式
+   （无标尺细线、无独立底色，透出与外部一致的 .ed-tl-head 背景） */
+.ed-tl-head-top {
+  position: absolute; left: 0; top: 0; right: 0; height: var(--tl-ruler-h, 30px); z-index: 2;
+  background: transparent;
+}
+/* 底部滚动条占位区（高度对齐 scrollbarHeight，仅横向滚动条出现时 display:block）：
+   div 保留但不展示任何样式（无上边框线、无独立底色，透出与外部一致的背景） */
+.ed-tl-head-sb {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 8px; z-index: 2;
+  display: none; background: transparent;
+}
+/* 行容器层：每条真实轨道一个 .ed-tl-head-row，与右侧 canvas 泳道一一对应。
+   clip-path 裁出播放区（标尺带之下、底部横滚条占位之上）：纵滚时行随泳道
+   上下平移但不会滑入固定的标尺占位带 / 滚动条占位带，与 canvas 播放区遮罩同口径 */
+.ed-tl-head-rows {
+  position: absolute; inset: 0; z-index: 1;
+  clip-path: inset(var(--tl-ruler-h, 30px) 0 var(--tl-sb-h, 0px) 0);
+}
+/* 行容器：top/高度由 JS 随泳道下发，行底色铺满 90px 轨道头列，按钮全部收在本行内 */
+.ed-tl-head-row {
+  position: absolute; left: 0; right: 0;
+  background: var(--tl-lane-fill, #242428);
+}
+/* 空主轨占位行（他轨有素材而主轨空）：底色与 canvas 亮一档空带 0x2a2a2e 一致 */
+.ed-tl-head-row.is-empty-main { background: #2a2a2e; }
+/* 空主轨浮动高亮条（无真实轨道，独立于行容器） */
+.ed-tl-head-lane {
+  position: absolute; left: 0; right: 0;
+  background: var(--tl-lane-fill, #242428);
+}
+/* 素材拖入时目标轨道行（含空白区浮动新轨）整行提亮，与 canvas 泳道高亮接续 */
+.ed-tl-head-row.is-drag-over,
+.ed-tl-head-lane.is-drag-over { background: rgba(255,255,255,.08); }
+
+/* 行内单元格：满轨高（top/bottom 锚定行容器），水平 left 按槽位固定 */
+.ed-tl-cell {
+  position: absolute; top: 0; bottom: 0; left: 0; width: 20px; margin: 0; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+/* 类型图标槽（left:6）纯装饰（浅灰再降 50% 透明度），不响应指针 */
+.ed-tl-head-type { left: 6px; color: #8b8b95; opacity: .5; pointer-events: none; }
+/* 三个操作按钮槽位：锁定 26 / 显示 46 / 原声 66；点击热区与轨道等高 */
+.ed-tl-head-btn[data-act="lock"]  { left: 26px; }
+.ed-tl-head-btn[data-act="show"]  { left: 46px; }
+.ed-tl-head-btn[data-act="sound"] { left: 66px; }
+/* 占位按钮（空主轨，无 data-act）沿用锁定槽 26/46/66：按在行内的次序 nth 定位 */
+.ed-tl-head-row.is-empty-main .ed-tl-head-btn.is-ph:nth-of-type(2) { left: 26px; }
+.ed-tl-head-row.is-empty-main .ed-tl-head-btn.is-ph:nth-of-type(3) { left: 46px; }
+.ed-tl-head-row.is-empty-main .ed-tl-head-btn.is-ph:nth-of-type(4) { left: 66px; }
+/* 操作按钮单元格：视觉 hover 只落在图标方块上（圆角正方形） */
+.ed-tl-head-btn {
+  border: 0; border-radius: 4px; background: var(--tl-btn-bg, transparent);
+  color: #c8c8d0; cursor: pointer;
+}
+/* 空主轨占位按钮：视觉与普通按钮一致，但主轨对象不存在，整格不响应指针 */
+.ed-tl-head-btn.is-ph { cursor: default; pointer-events: none; }
+/* 激活态（已锁定 / 已隐藏 / 已静音）：剪映青，参考 .used */
+.ed-tl-head-btn.is-off { color: var(--ed-accent, #18b9d4); }
+/* 18px 图标包裹层：按钮满轨高，hover 底色 / tooltip 都锚定在图标方块而非整格 */
+.ed-tl-ic {
+  position: relative; width: 18px; height: 18px;
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+}
+.ed-tl-head-btn:hover .ed-tl-ic { background: var(--tl-btn-hover, #3b3b42); }
+.ed-tl-head-btn.is-off:hover .ed-tl-ic { background: #17333a; }
+/* hover 提示气泡（参考 Tooltip position=bottom；仅三个操作按钮） */
+.ed-tl-ic[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; top: calc(100% + 4px);
+  transform: translateX(-50%) translateY(-2px);
+  background: rgba(28,28,32,.96); color: #ececf0;
+  border: 1px solid #45454a; border-radius: 4px;
+  padding: 2px 8px; font-size: 11px; line-height: 1.5;
+  white-space: nowrap; pointer-events: none; z-index: 80;
+  opacity: 0; transition: opacity .12s ease, transform .12s ease;
+}
+.ed-tl-ic[data-tip]:hover::after { opacity: 1; transform: translateX(-50%) translateY(0); }
+/* 最右（原声）槽气泡右对齐，防止被轨道头列裁切 */
+.ed-tl-head-btn[data-act="sound"] .ed-tl-ic[data-tip]::after,
+.ed-tl-head-row.is-empty-main .ed-tl-head-btn.is-ph:nth-of-type(4) .ed-tl-ic[data-tip]::after {
+  left: auto; right: 0; transform: translateY(-2px);
+}
+.ed-tl-head-btn[data-act="sound"] .ed-tl-ic[data-tip]:hover::after { transform: translateY(0); }
+
+/* ---- 主轨「封面」设置弹窗：仅两个来源按钮（上传封面 / 首帧封面） ---- */
+.ed-cover-panel { width: 360px; }
+.ed-cover-body { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+.ed-cover-opt {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 12px 14px; text-align: left;
+  background: var(--ed-panel-hi); border: 1px solid var(--ed-border); border-radius: 8px;
+  color: var(--ed-text); cursor: pointer;
+}
+.ed-cover-opt:hover { border-color: var(--ed-accent); background: #313136; }
+.ed-cover-opt:disabled { opacity: .55; cursor: default; }
+.ed-cover-opt-icon {
+  flex: none; width: 34px; height: 34px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(24,185,212,.12); color: var(--ed-accent);
+}
+.ed-cover-opt-icon svg { width: 19px; height: 19px; }
+.ed-cover-opt-main { display: block; font-size: 13px; font-weight: 600; color: #fff; line-height: 1.3; }
+.ed-cover-opt-sub { display: block; margin-top: 2px; font-size: 11px; color: var(--ed-muted); line-height: 1.4; }
+
+/* ===== 底部行：轨道模块 + 竖井电平表（第五模块，同高并排） =====
+   行高必须是确定值（--ed-tl-h）：否则 canvas 的 height:100% 相对 auto 父级
+   不生效，会按位图像素比保持宽高比，导致左右拉宽面板时高度被同比撑高。 */
+.ed-bottom {
+  display: flex; flex: none; align-items: stretch; min-width: 0;
+  height: var(--ed-tl-h);
+}
+.ed-bottom .ed-timeline { flex: 1 1 auto; min-width: 0; height: auto; }
+
+/* 竖井电平表：常驻第五模块，宽度由分隔条拖拽写入 --ed-vu-w（90–220，默认 150），高度随行 stretch */
+.ed-vumeter {
+  flex: none; width: var(--ed-vu-w, 150px); min-height: 0;
+  align-self: stretch;
+  background: #2b2b2e;
+  border-radius: 8px;
+  overflow: hidden;
+}
+.ed-vumeter-canvas { display: block; width: 100%; height: 100%; }
+
+/* ---------- 时间轴片段右键菜单（复制 / 剪切 / 删除，样式与素材库右键一致） ---------- */
+.ed-tl-ctx {
+  position: fixed; z-index: 90; min-width: 90px;
+  padding: 4px; border: 1px solid var(--ed-border); border-radius: 6px;
+  background: #232326; box-shadow: 0 10px 28px rgba(0, 0, 0, .55);
+}
+.ed-tl-ctx-item {
+  display: block; width: 100%; padding: 7px 10px; border: none; border-radius: 4px;
+  background: transparent; color: var(--ed-text); font-size: 11px;
+  text-align: left; cursor: pointer;
+}
+.ed-tl-ctx-item:hover { background: #333338; }

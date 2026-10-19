@@ -1,0 +1,7 @@
+{
+  "backend": {
+    "enabled": true,
+    "baseUrl": "http://localhost:3001",
+    "timeoutMs": 8000
+  }
+}

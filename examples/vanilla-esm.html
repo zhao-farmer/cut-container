@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CutContainer · 原生示例（ES module）</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #171718; }
+      #app { height: 100%; }
+      #status {
+        position: fixed; inset: 0; z-index: 10; display: flex; align-items: center; justify-content: center;
+        padding: 24px; text-align: center; color: #d8d8dc;
+        font: 13px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        background: #171718;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="status">加载 ES module 依赖…</div>
+    <div id="app"></div>
+
+    <!-- 与 pixi.mjs 的用法一致：type=module + import map -->
+    <script>
+      if (location.protocol === 'file:') {
+        document.getElementById('status').textContent =
+          'ES module 不能从 file:// 加载，请使用本地 HTTP 服务后访问 examples/vanilla-esm.html'
+      }
+    </script>
+    <script type="importmap">
+      {
+        "imports": {
+          "pixi.js": "https://cdn.jsdelivr.net/npm/pixi.js@8.12.0/dist/pixi.min.mjs",
+          "mediabunny": "https://cdn.jsdelivr.net/npm/mediabunny@1.50.8/dist/bundles/mediabunny.min.mjs"
+        }
+      }
+    </script>
+    <script type="module">
+      import * as PIXI from 'pixi.js'
+      import * as Mediabunny from 'mediabunny'
+      import { createApp } from '../npm-build-dist/lib/cut-container.mjs'
+
+      const status = document.getElementById('status')
+      try {
+        const app = createApp({
+          host: '#app',
+          onImportTracks: async () => null,
+          onExportTracks: async config => console.log('[ESM 示例] 导出轨道配置', config)
+        })
+        window.demoApp = app
+
+        try {
+          await app.loadConfig('./user-config.json')
+        } catch (err) {
+          console.warn('[示例] 外部配置加载失败，改用内联配置：', err)
+          await app.loadConfig({
+            title: 'ESM 示例（内联配置）',
+            tabs: ['material', 'audio', 'text', 'caption'],
+            backend: { enabled: false, baseUrl: '', timeoutMs: 8000 }
+          })
+        }
+
+        await app.mount()
+        status.style.display = 'none'
+        console.log('已挂载 <cut-container>', app.element, 'pixi', PIXI.VERSION, 'mediabunny', typeof Mediabunny)
+      } catch (err) {
+        console.error(err)
+        status.textContent = `启动失败：${err?.message || err}`
+      }
+    </script>
+  </body>
+</html>
