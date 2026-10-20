@@ -345,5 +345,7 @@ export const en: Record<ZhKeys, string> = {
   'cover.title': 'Set cover',
   'cover.remove': 'Remove cover',
   'cover.save': 'Save',
-  'cover.cancel': 'Cancel'
+  'cover.cancel': 'Cancel',
+  'cache.confirm': 'Clear local cache? This removes the saved media, timeline and cover data, then reloads the editor.',
+  'cache.cleared': 'Local cache cleared. Reloading…'
 }

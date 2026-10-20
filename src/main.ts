@@ -22,6 +22,7 @@ import SolidParent from './parent-demos/SolidParent.solid.tsx'
 import { mountVanillaParent } from './parent-demos/VanillaParent'
 import type { SvelteComponent } from 'svelte'
 import { editorStorage, STORAGE_KEYS, isMaterialsData, isTrackObjectList } from './editor/utils/storage'
+import { clearLocalMedia } from './editor/utils/localMediaStore'
 
 type FrameworkKey = 'vue' | 'react' | 'svelte' | 'solid' | 'vanilla'
 
@@ -163,10 +164,11 @@ function importConfig(): void {
   input.click()
 }
 
-/** 清除本地缓存：清空 localStorage 后重载编辑器，恢复框架初始演示数据 */
-function clearCache(): void {
+/** 清除本地缓存：清空 localStorage + IndexedDB 本地媒体后重载编辑器，恢复框架初始演示数据 */
+async function clearCache(): Promise<void> {
   if (!window.confirm('确定清除本地缓存的素材与时间线数据吗？将恢复为框架初始演示数据。')) return
   editorStorage.clear()
+  await clearLocalMedia()
   console.log('[菜单] 已清除本地缓存：', STORAGE_KEYS)
   remountCurrent()
 }

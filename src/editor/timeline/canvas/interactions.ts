@@ -579,18 +579,25 @@ export function bindCanvasInteractions(ctx: TimelineCtx, deps: InteractionDeps):
     // 与播放头（指针轴）同以帧为单位：屏幕位置先吸附到最近帧再回映屏幕 x，
     // 故鼠标移动时黄线连带「靠后一帧」灰矩形是整帧整帧地跳，而非连续滑动；
     // 同时把悬停时刻上抛给播放器，把该帧画面放进播放画面（不动播放头）。
+    // 秒数不走 xToFrameTime：那条路经过帧向量，其长度 = 素材总长 + 内边距，
+    // 会让预览轴卡在内容末尾、素材外的空白轨道拖不过去；这里直接由屏幕坐标换算。
     if (s.previewAxis && !s.playing) {
       const maxY = (canvas.clientHeight || 0) - cfg.scrollbarHeight
       let nx: number | null = null
+      let nxSec: number | null = null
       if (p.x >= cfg.headWidth && p.y >= 0 && p.y <= maxY) {
-        nx = timeToX(xToFrameTime(p.x), pxPerSecForLevel(s.zoom, cfg))
+        nxSec = Math.max(
+          0,
+          frameSnap((p.x - ctx.originX + s.offX) / pxPerSecForLevel(s.zoom, cfg))
+        )
+        nx = timeToX(nxSec, pxPerSecForLevel(s.zoom, cfg))
       }
       const moved = nx === null ? s.previewX !== null : s.previewX === null || Math.abs(nx - s.previewX) > 0.5
       if (moved) {
         s.previewX = nx
         scheduleDraw()
         // 黄线即时；画面预览（多层静帧 / 视频解码）走 200ms leading+trailing 节流
-        emitPreview(nx === null ? null : xToFrameTime(nx))
+        emitPreview(nxSec)
       }
     }
 

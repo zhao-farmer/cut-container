@@ -361,7 +361,10 @@ export const zh = {
   'cover.title': '设置封面',
   'cover.remove': '移除封面',
   'cover.save': '保存',
-  'cover.cancel': '取消'
+  'cover.cancel': '取消',
+  // ---------- 本机缓存 ----------
+  'cache.confirm': '确定清除本机缓存吗？将删除本地保存的素材、时间线与封面，并重新加载编辑器。',
+  'cache.cleared': '已清除本机缓存，正在重新加载…'
 } as const
 
 export type ZhKeys = keyof typeof zh

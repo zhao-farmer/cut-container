@@ -96,6 +96,23 @@ export class CutContainer extends HTMLElement {
     return this._framework
   }
 
+  // ==================== 缓存 ====================
+
+  /**
+   * 清除本机缓存：localStorage（素材 / 时间线 / 封面 / 标记）+ IndexedDB 里的本地媒体文件。
+   * 未挂载编辑器（或当前组件不支持）时返回 false。
+   *
+   * @param options.confirm 是否弹确认框，默认 true
+   * @param options.reload  清空后是否重载页面，默认 true（宿主可传 false 自行重挂）
+   */
+  async clearCache(options: { confirm?: boolean; reload?: boolean } = {}): Promise<boolean> {
+    const raw = (this._instance as any)?.raw as
+      | { clearCache?: (o?: typeof options) => Promise<boolean> }
+      | undefined
+    if (typeof raw?.clearCache === 'function') return raw.clearCache(options)
+    return false
+  }
+
   // ==================== 核心方法 ====================
 
   /**

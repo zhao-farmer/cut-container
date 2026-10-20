@@ -62,7 +62,7 @@ import { FRAME_ICON, UPLOAD_ICON } from './utils/icons'
 import { fetchCatalog, fetchRemoteConfig, loadAppConfig, deleteCatalogItem } from './services/backend'
 import { mergeCatalogIntoMaterials } from './services/catalog'
 import { addRemoteFonts } from './utils/customFonts'
-import { restoreLocalMedia } from './utils/localMediaStore'
+import { restoreLocalMedia, clearLocalMedia } from './utils/localMediaStore'
 import { openClipMenu, setClipClipboard, getClipClipboard } from './timeline/manage/clipMenu'
 import { bindTimelineShortcuts } from './timeline/manage/keyboard'
 
@@ -2115,8 +2115,45 @@ export function createEditorPage(
   }
   window.addEventListener('keydown', onExportShortcut)
 
+  /**
+   * 清除本机缓存：localStorage（素材 / 时间线 / 封面 / 标记）+ IndexedDB 里的本地媒体文件。
+   * 通过 HTML / createApp 嵌入时没有宿主「文件」菜单，因此同时提供三个入口：
+   *   - 快捷键：Ctrl/Cmd + Shift + Backspace
+   *   - window 事件：`uc-editor:clear-cache`（detail 可传 { confirm, reload }）
+   *   - 实例方法：handle.clearCache(options?)
+   * 默认弹确认框并在清空后重载页面；宿主传 { confirm:false, reload:false } 可自行接管。
+   */
+  const clearCache = async (options: { confirm?: boolean; reload?: boolean } = {}): Promise<boolean> => {
+    if (options.confirm !== false && !window.confirm(t('cache.confirm'))) return false
+    editorStorage.clear()
+    await clearLocalMedia()
+    // 旧 blob: 句柄随页面卸载一并作废，无需逐个 revoke
+    console.info('[CutContainer]', t('cache.cleared'))
+    window.dispatchEvent(new CustomEvent('uc-editor:cache-cleared'))
+    if (options.reload !== false) location.reload()
+    return true
+  }
+
+  /** Ctrl/Cmd + Shift + Backspace：清除本机缓存（嵌入页面没有菜单入口，靠快捷键 + 事件） */
+  const onClearCacheShortcut = (e: KeyboardEvent) => {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey || !e.shiftKey) return
+    if (e.key !== 'Backspace' || e.isComposing) return
+    e.preventDefault()
+    void clearCache()
+  }
+  window.addEventListener('keydown', onClearCacheShortcut)
+
+  /** 宿主事件入口：el.dispatchEvent(new CustomEvent('uc-editor:clear-cache', { detail: { confirm:false } })) */
+  const onClearCacheEvent = (e: Event) => {
+    const detail = ((e as CustomEvent).detail ?? {}) as { confirm?: boolean; reload?: boolean }
+    void clearCache({ confirm: detail.confirm !== false, reload: detail.reload !== false })
+  }
+  window.addEventListener('uc-editor:clear-cache', onClearCacheEvent)
+
   // ---------- 外部 props 更新 ----------
   return {
+    /** 清除本机缓存（localStorage + IndexedDB 本地媒体）；默认确认后重载页面 */
+    clearCache,
     /** 当前工程快照（导出轨道配置回调使用） */
     getSnapshot() {
       return {
@@ -2167,6 +2204,8 @@ export function createEditorPage(
       document.removeEventListener('pointerdown', onDocPointerDown, true)
       window.removeEventListener('uc-editor:export-video', onExportVideo)
       window.removeEventListener('keydown', onExportShortcut)
+      window.removeEventListener('keydown', onClearCacheShortcut)
+      window.removeEventListener('uc-editor:clear-cache', onClearCacheEvent)
       unbindSplitters()
       timelineToolbar.destroy()
       materialsPanel.destroy()

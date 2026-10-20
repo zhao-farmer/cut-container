@@ -9,6 +9,8 @@ import createEditorPage from '../editor/editorPage'
 import { MATERIALS, TRACKS, DRAFT_TITLE } from '../parent-demos/externalData'
 import type { Lang } from '../editor/lang'
 import { setBackendConfig } from '../editor/services/backend'
+import { editorStorage } from '../editor/utils/storage'
+import { clearLocalMedia } from '../editor/utils/localMediaStore'
 
 export { CutContainer } from '../cutContainer'
 export { defineCutContainer, registerAdapter } from '../cutContainer'
@@ -90,6 +92,8 @@ export interface EditorAppHandle {
   /** 读取当前工程并执行 onExportTracks */
   exportTracks: () => Promise<EditorUserConfig>
   unmount: () => void
+  /** 清除本机缓存（localStorage + IndexedDB 本地媒体）；默认确认后重载页面 */
+  clearCache: (options?: { confirm?: boolean; reload?: boolean }) => Promise<boolean>
   getConfig: () => EditorUserConfig
   readonly element: CutContainerElement | null
 }
@@ -209,6 +213,14 @@ export function createApp(options: CreateEditorAppOptions): EditorAppHandle {
     importTracks,
     exportTracks,
     unmount: () => element?.unmount(),
+    clearCache: async (options: { confirm?: boolean; reload?: boolean } = {}) => {
+      // 已挂载：交给编辑器实例（带确认框 / 重载策略）
+      if (element) return element.clearCache(options)
+      // 尚未挂载：直接清持久化，避免旧缓存挡住即将挂载的配置
+      editorStorage.clear()
+      await clearLocalMedia()
+      return true
+    },
     getConfig: () => ({ ...config }),
     get element() {
       return element

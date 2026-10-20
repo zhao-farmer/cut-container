@@ -80,3 +80,23 @@ export async function restoreLocalMedia(data: MaterialsData): Promise<number> {
   }
   return changed
 }
+
+/**
+ * 清空 IndexedDB 里保存的本地媒体文件（清除本机缓存时调用）。
+ * 与 editorStorage.clear() 配合，覆盖 localStorage + IndexedDB 两处持久化。
+ */
+export async function clearLocalMedia(): Promise<void> {
+  const db = await openDB()
+  if (!db) return
+  await new Promise<void>(resolve => {
+    try {
+      const tx = db.transaction(STORE, 'readwrite')
+      tx.objectStore(STORE).clear()
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => resolve()
+      tx.onabort = () => resolve()
+    } catch {
+      resolve()
+    }
+  })
+}

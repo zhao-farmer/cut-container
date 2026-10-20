@@ -69,9 +69,12 @@ fs.copyFileSync(
   path.join(vendorDir, 'LICENSE.mediabunny.txt')
 )
 
-// 发布包 README / 许可证（中英文双版本）
+// 发布包 README / 许可证：
+// 中文文档已内联进 README.md（npm 只渲染这一个文件，且不托管包内其它 md），
+// 故发布包不再带 README.zh-CN.md；仓库里保留该文件供 GitHub 浏览。
+// 旧构建残留兜底清理（空 outDir 之外的第二道保险）
+fs.rmSync(path.join(pkgDir, 'README.zh-CN.md'), { force: true })
 fs.copyFileSync(path.join(root, 'README.md'), path.join(pkgDir, 'README.md'))
-fs.copyFileSync(path.join(root, 'README.zh-CN.md'), path.join(pkgDir, 'README.zh-CN.md'))
 fs.copyFileSync(path.join(root, 'LICENSE'), path.join(pkgDir, 'LICENSE'))
 
 // 发布包 package.json：只保留运行时必需字段
@@ -99,7 +102,7 @@ const outPkg = {
     './vendor/mediabunny': './dist/vendor/mediabunny.min.js',
     './package.json': './package.json'
   },
-  files: ['dist', 'lib', 'index.d.ts', 'README.md', 'README.zh-CN.md', 'LICENSE'],
+  files: ['dist', 'lib', 'index.d.ts', 'README.md', 'LICENSE'],
   sideEffects: true,
   dependencies: rootPkg.dependencies
 }
