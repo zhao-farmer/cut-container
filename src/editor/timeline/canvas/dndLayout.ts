@@ -28,7 +28,7 @@ export interface DndLayoutApi {
 }
 
 export function createDndLayout(ctx: TimelineCtx): DndLayoutApi {
-  const { cfg, originX, s, geo } = ctx
+  const { cfg, s, geo } = ctx
   const { frameSnap, timeToX } = geo
 
   /**
@@ -116,7 +116,7 @@ export function createDndLayout(ctx: TimelineCtx): DndLayoutApi {
     const guideX = clamp(x, 0, cw - 1)
     // 指针时刻的原始帧起点（未经过自动磁吸改写）：主轨磁吸 ON 且浮块在主轨上时，
     // 拖动全程以它为准——浮块横向 1:1 跟手，排列只发生在松手提交时。
-    const rawStart = Math.max(0, frameSnap((x - originX + s.offX - grabOffX) / scale))
+    const rawStart = Math.max(0, frameSnap((x - ctx.originX + s.offX - grabOffX) / scale))
     let start = rawStart
 
     // 自动磁吸：开启后，拖入资源的开头 / 结尾对齐任意轨道上某一子项的

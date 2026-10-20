@@ -30,7 +30,8 @@ export interface GeometryApi {
 }
 
 export function createGeometry(ctx: TimelineCtx): GeometryApi {
-  const { cfg, originX, s } = ctx
+  const { cfg, s } = ctx
+  // originX 在轨道头列收起 / 展开时会被改写（全空工程 headWidth → 0），必须每次现取
 
   const laneHOf = (t: TrackObject | null) =>
     !t || t.layer === 0
@@ -45,12 +46,12 @@ export function createGeometry(ctx: TimelineCtx): GeometryApi {
     return heights.reduce((sum, h) => sum + h, 0) + cfg.lineDistance * (heights.length - 1)
   }
 
-  const timeToX = (t: number, scale: number) => originX + t * scale - s.offX
+  const timeToX = (t: number, scale: number) => ctx.originX + t * scale - s.offX
 
   const frameSnap = (sec: number) => Math.round(sec * cfg.fps) / cfg.fps
 
   const xToFrameTime = (screenX: number) =>
-    getFrameByPosition(screenX - originX + s.offX) / cfg.fps
+    getFrameByPosition(screenX - ctx.originX + s.offX) / cfg.fps
 
   /**
    * 计算素材块内部几何：媒体轨（主轨 70 / image 轨 50）与音频块满高

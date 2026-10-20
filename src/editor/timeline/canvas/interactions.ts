@@ -33,7 +33,7 @@ export interface InteractionsApi {
 }
 
 export function bindCanvasInteractions(ctx: TimelineCtx, deps: InteractionDeps): InteractionsApi & GestureBridge {
-  const { host, canvas, app, cfg, originX, hintEl, s, views, callbacks } = ctx
+  const { host, canvas, app, cfg, hintEl, s, views, callbacks } = ctx
   const { timeToX, frameSnap, xToFrameTime, clipGeomFor, stackHeightOf } = ctx.geo
   const { renderer, ops, trim, drag } = deps
   const { layout, scrollbarGeom, draw, scheduleDraw, flushDraw, emitPreview, cancelPreviewTrail } = renderer
@@ -71,7 +71,7 @@ export function bindCanvasInteractions(ctx: TimelineCtx, deps: InteractionDeps):
     const cw = host.clientWidth || 1280
     const ch = host.clientHeight || 204
     const worldW =
-      originX + totalDuration(s.data ?? [], cfg) * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2
+      ctx.originX + totalDuration(s.data ?? [], cfg) * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2
     if (worldW <= cw) return null
     // div 轨道头列不属于滚动条（canvas 自 headWidth 起，物理上点不到 <headWidth，护栏仅作语义兜底）
     if (p.x < cfg.headWidth) return null
@@ -89,7 +89,7 @@ export function bindCanvasInteractions(ctx: TimelineCtx, deps: InteractionDeps):
     const cw = host.clientWidth || 1280
     const ch = host.clientHeight || 204
     const worldW =
-      originX + totalDuration(s.data ?? [], cfg) * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2
+      ctx.originX + totalDuration(s.data ?? [], cfg) * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2
     const top = cfg.timelineHeight
     const bottom = ch - (worldW > cw ? cfg.scrollbarHeight : 0)
     const size = COVER_BTN_SIZE
@@ -119,7 +119,7 @@ export function bindCanvasInteractions(ctx: TimelineCtx, deps: InteractionDeps):
     const cw = host.clientWidth || 1280
     const ch = host.clientHeight || 204
     const worldW =
-      originX + totalDuration(s.data ?? [], cfg) * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2
+      ctx.originX + totalDuration(s.data ?? [], cfg) * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2
     const bottom = ch - (worldW > cw ? cfg.scrollbarHeight : 0)
     const hx = timeToX(s.playhead, pxPerSecForLevel(s.zoom, cfg))
     const top = cfg.scaleSpace
@@ -542,7 +542,7 @@ export function bindCanvasInteractions(ctx: TimelineCtx, deps: InteractionDeps):
     if (s.sbDragging) {
       const cw = host.clientWidth || 1280
       const worldW =
-        originX + totalDuration(s.data ?? [], cfg) * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2
+        ctx.originX + totalDuration(s.data ?? [], cfg) * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2
       const geom = scrollbarGeom(cw, worldW)
       const dx = e.clientX - s.dragStartX
       s.offX = clamp(
@@ -777,7 +777,7 @@ export function bindCanvasInteractions(ctx: TimelineCtx, deps: InteractionDeps):
     const tracks = s.data ?? []
     const stackH = stackHeightOf(tracks)
     const worldW =
-      originX + totalDuration(tracks, cfg) * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2
+      ctx.originX + totalDuration(tracks, cfg) * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2
     // 与 layout 同口径：仅实际出现横向滚动条时才扣除条高
     const hasHBar = worldW > cw
     const viewH = ch - cfg.timelineHeight - (hasHBar ? cfg.scrollbarHeight : 0)

@@ -433,10 +433,10 @@ export function createEditorPage(
     title: props.title || '未命名草稿',
     materials,
     materialsSavedAt: storedM?.savedAt ?? null,
-    // 默认「适应（原始）」：主轨有资源时取第一个资源大小，没有时 1600×9000
+    // 默认「适应（原始）」：主轨有资源时取第一个资源大小，没有时 1600×900（16:9）
     ratioLabel: '适应（原始）',
     canvasW: 1600,
-    canvasH: 9000
+    canvasH: 900
   }
 
   // 首次运行（本地无缓存）：外部传入的数据立即落盘
@@ -786,7 +786,7 @@ export function createEditorPage(
         changed = true
       }
       // 画布默认由「适应（原始）」根据主轨第一个资源决定；远端草稿只同步标题，
-      // 不再用固定 canvasW/H 覆盖该规则（主轨没有资源时统一 1600×9000）。
+      // 不再用固定 canvasW/H 覆盖该规则（主轨没有资源时统一 1600×900）。
       if (changed) rerenderDetail()
     }
   })()

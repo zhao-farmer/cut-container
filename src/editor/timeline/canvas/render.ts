@@ -143,7 +143,8 @@ export interface RendererApi {
 }
 
 export function createRenderer(ctx: TimelineCtx, deps: RendererDeps): RendererApi {
-  const { host, canvas, app, PIXI, cfg, originX, store, waveform, callbacks, layers, views, s } = ctx
+  const { host, canvas, app, PIXI, cfg, store, waveform, callbacks, layers, views, s } = ctx
+  // originX 每次现取：全空工程收起轨道头列时 headWidth → 0，ctx.originX 会被改写
   const {
     bgLayer, laneLayer, rulerLayer, clipsLayer, laneMask, playMask,
     dndGhostLayer, dndGhostMask, dragClipMask, dragLayer, fxLayer, coverLayer, coverMask
@@ -175,7 +176,7 @@ export function createRenderer(ctx: TimelineCtx, deps: RendererDeps): RendererAp
     const stackH = defs.reduce((s, d) => s + d.h, 0) + cfg.lineDistance * (defs.length - 1)
     // 拖裁 / 拖动中传入预览末端：横滚条随主轨右拉超出边界即时出现（见 dragWorldEndSec）
     const duration = durationOverride ?? totalDuration(tracks, cfg)
-    const hasHBar = originX + duration * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2 > cw
+    const hasHBar = ctx.originX + duration * pxPerSecForLevel(s.zoom, cfg) + cfg.padX * 2 > cw
     const viewH = ch - cfg.timelineHeight - (hasHBar ? cfg.scrollbarHeight : 0)
     s.offY = clamp(s.offY, Math.min(0, viewH - stackH - 12), 0)
     const baseY =
@@ -227,7 +228,7 @@ export function createRenderer(ctx: TimelineCtx, deps: RendererDeps): RendererAp
       totalDuration(tracks, cfg),
       s.clipDrag ? dragWorldEndSec(s.clipDrag, scale) : 0
     )
-    const worldW = originX + duration * scale + cfg.padX * 2
+    const worldW = ctx.originX + duration * scale + cfg.padX * 2
     // 手势中不做向下夹止：拖出扩展区后再把块拉回，世界上界收缩不应瞬吸视口
     // （上界由边缘平移循环把关；松手后按真实 totalDuration 自然夹回）
     const maxOffX = s.clipDrag ? Math.max(Math.max(0, worldW - cw), s.offX) : Math.max(0, worldW - cw)
@@ -325,12 +326,12 @@ export function createRenderer(ctx: TimelineCtx, deps: RendererDeps): RendererAp
     // 刻度始终铺满整个可视区，与素材长短无关（剪映行为）：
     // 位置只由帧索引数学计算（round3 与 frameVector 同源），循环范围仅由视口决定
     const stride = tsInfo.minor
-    let startCount = Math.max(0, Math.floor((s.offX - originX) / fw))
-    const endCount = Math.ceil((s.offX + cw - originX) / fw)
+    let startCount = Math.max(0, Math.floor((s.offX - ctx.originX) / fw))
+    const endCount = Math.ceil((s.offX + cw - ctx.originX) / fw)
     startCount -= startCount % stride
     const inFrameDomain = tsInfo.frameLabel > 0
     for (let count = startCount; count <= endCount; count += stride) {
-      const x = originX + Math.round(count * fw * 1000) / 1000 - s.offX
+      const x = ctx.originX + Math.round(count * fw * 1000) / 1000 - s.offX
       if (x < -20 || x > cw + 20) continue
       const isSecond = count % cfg.fps === 0
 
@@ -396,7 +397,7 @@ export function createRenderer(ctx: TimelineCtx, deps: RendererDeps): RendererAp
     // 0..headWidth 物理上在画布外（DOM 轨道头列另管）。
     // 主轨空态两口径（剪映）：全空工程 → 整条位渲染虚线投放区 + 胶片图标 + 引导文案；
     // 他轨有素材 → 亮一档空带 + 同款胶片图标（无文案、无顶边分隔线）。
-    const laneStartX = originX - s.offX
+    const laneStartX = ctx.originX - s.offX
     lanes.forEach(lane => {
       if (lane.isMain && mainTrackEmpty) {
         const panelCY = lane.y + lane.h / 2
@@ -650,7 +651,7 @@ export function createRenderer(ctx: TimelineCtx, deps: RendererDeps): RendererAp
     const coverLane = !allTracksEmpty ? lanes.find(l => l.isMain) ?? null : null
     if (coverLane) {
       const size = COVER_BTN_SIZE
-      const bx = originX - s.offX - size - 5
+      const bx = ctx.originX - s.offX - size - 5
       const by = coverLane.y + (coverLane.h - size) / 2
       s.coverRect = { x: bx, y: by }
       const cover = new PIXI.Container()

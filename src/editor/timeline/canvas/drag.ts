@@ -30,7 +30,7 @@ export interface DragApi {
 }
 
 export function createDrag(ctx: TimelineCtx, bridge: GestureBridge): DragApi {
-  const { host, cfg, originX, s, callbacks, canvas } = ctx
+  const { host, cfg, s, callbacks, canvas } = ctx
 
   /** 拖裁预览下的世界末端（秒）：trimR 取预览终点；move 取浮块右缘；其余不扩展 */
   function dragWorldEndSec(cd: ClipDrag, scale: number): number {
@@ -41,7 +41,7 @@ export function createDrag(ctx: TimelineCtx, bridge: GestureBridge): DragApi {
       if (e > end) end = e
     } else if (cd.mode === 'move' && cd.moved) {
       // 浮块世界左缘 = 虚拟指针世界 x - 抓取偏移（grabOffX 与世界 / 屏幕 px 同单位）
-      const e = (cd.liveX - cd.grabOffX - originX) / scale + cd.origDur
+      const e = (cd.liveX - cd.grabOffX - ctx.originX) / scale + cd.origDur
       if (Number.isFinite(e) && e > end) end = e
     }
     return end
@@ -72,7 +72,7 @@ export function createDrag(ctx: TimelineCtx, bridge: GestureBridge): DragApi {
     }
     if (!v) return
     const scale = pxPerSecForLevel(s.zoom, cfg)
-    const liveWorldW = originX + dragWorldEndSec(cd, scale) * scale + cfg.padX * 2
+    const liveWorldW = ctx.originX + dragWorldEndSec(cd, scale) * scale + cfg.padX * 2
     const maxOff = Math.max(0, liveWorldW - cw)
     const next = clamp(s.offX + (v * dtMs) / 1000, 0, maxOff)
     if (next === s.offX) return

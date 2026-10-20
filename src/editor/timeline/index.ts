@@ -59,8 +59,9 @@ export async function createTimelineTrack(
   const cfg = resolveTimelineConfig(config)
   // 时间 0 在静止（s.offX=0）时的屏幕 x：轨道头列 + 封面前缀段；
   // 所有时间坐标换算（timeToX / 标尺 / worldW / 滚动条 / 缩放锚点）都以此为世界原点，
-  // 横滚时时间 0 的实际屏幕位置为 originX - s.offX（封面按钮同步移动）
-  const originX = cfg.headWidth + cfg.preGap
+  // 横滚时时间 0 的实际屏幕位置为 originX - s.offX（封面按钮同步移动）。
+  // 注意：originX 挂在 ctx 上（不是局部常量）——全空工程收起轨道头列时会被改写，
+  // 各模块一律在调用时读 ctx.originX，禁止解构后长期持有。
   const store: MediaStore = createMediaStore(PIXI)
   const waveform = new WaveformRenderer(PIXI)
   // 画布全部可变状态（缩放 / 滚动 / 选中 / 手势 / 拖放 / 封面 / 节流等）统一装状态盒
@@ -118,18 +119,17 @@ export async function createTimelineTrack(
 
   /* ===== 画布共享上下文：常量 / 服务 + 状态盒 s；各功能模块只经 ctx 访问 ===== */
   const headEls: HeadEls = head.els
-  const ctxBase: Omit<TimelineCtx, 'geo'> = {
-    host, canvas, app, PIXI, cfg, originX, store, waveform, callbacks,
+  const ctx = {
+    host, canvas, app, PIXI, cfg, originX: cfg.headWidth + cfg.preGap, store, waveform, callbacks,
     hintEl, headEls, layers, views, s
-  }
-  const geo = createGeometry(ctxBase as unknown as TimelineCtx)
-  const ctx: TimelineCtx = { ...ctxBase, geo }
+  } as unknown as TimelineCtx
+  ctx.geo = createGeometry(ctx)
   /* 「添加」落点解析（近纯函数） */
   const dnd = createDndLayout(ctx)
   const payloadOfItem = dnd.payloadOfItem
   const resolveDnd = dnd.resolve
   /* 几何辅助（handle 中播放头 / 缩放锚点换算用） */
-  const { timeToX, frameSnap } = geo
+  const { timeToX, frameSnap } = ctx.geo
   /* 右侧画布栏：渲染（布局 / draw / 合帧 / 节流）；dragWorldEndSec 为函数声明提升，可提前引用 */
   const renderer = createRenderer(ctx, {
     syncHead,
@@ -155,6 +155,35 @@ export async function createTimelineTrack(
   gesture.updateClipDrag = interactions.updateClipDrag
   opsDeps.select = interactions.select
 
+  /* ===== 轨道头列宽度随空态收起（剪映空态：整条时间轴铺满，无左侧按钮列） =====
+   * 全空工程（所有轨道都没有片段）时轨道头列宽度归零：headWidth → 0、canvas 左移铺满、
+   * stage 平移归零、originX 前移到「封面前缀段」；一旦任一轨道出现片段就恢复常规宽度。
+   * 只在空 ⇄ 非空切换时重排一次，平时零开销。 */
+  const HEAD_COL_W = cfg.headWidth
+  let headCollapsed = false
+
+  function tracksAllEmpty(data: TrackObject[] | null): boolean {
+    return !data || data.length === 0 || data.every(t => (t.items?.length ?? 0) === 0)
+  }
+
+  function setHeadCollapsed(collapsed: boolean) {
+    if (headCollapsed === collapsed) return
+    headCollapsed = collapsed
+    cfg.headWidth = collapsed ? 0 : HEAD_COL_W
+    ctx.originX = cfg.headWidth + cfg.preGap
+    head.setCollapsed(collapsed)
+    // canvas 物理左缘与绘制坐标系同步平移（stage.x = -headWidth）
+    app.stage.x = -cfg.headWidth
+    canvas.style.left = `${cfg.headWidth}px`
+    const w = (host.clientWidth || 1280) - cfg.headWidth
+    const h = host.clientHeight
+    if (w > 0 && h > 0) app.renderer.resize(w, h)
+    if (!s.destroyed) draw()
+  }
+
+  // 首屏：按初始数据决定是否收起（createTimelineTrack 内首次 bind 已绘制过一帧）
+  setHeadCollapsed(tracksAllEmpty(initial))
+
   return {
     setData(next: TrackObject[] | null) {
       s.data = next
@@ -163,6 +192,8 @@ export async function createTimelineTrack(
         s.selection = null
         callbacks.onSelect?.(null)
       }
+      // 空 ⇄ 非空切换：先调轨道头列宽度 / canvas 尺寸，再按新宽度绘制
+      setHeadCollapsed(tracksAllEmpty(next))
       if (!s.destroyed) draw()
     },
     /** 就地改了同一引用数据后的轻量重绘（面板滑杆高频联动，rAF 合帧） */
@@ -201,12 +232,12 @@ export async function createTimelineTrack(
       // 旧实现用整幅 cw/2，偏左 headWidth/2（≈45px）：放大时指针下的时间点
       // 持续向右漂移，连带横滚条拇指位置每级都"跳"一下
       const viewCx = (cfg.headWidth + cw) / 2
-      const centerSec = (s.offX + viewCx - originX) / pxPerSecForLevel(s.zoom, cfg)
+      const centerSec = (s.offX + viewCx - ctx.originX) / pxPerSecForLevel(s.zoom, cfg)
       s.zoom = next
       const newScale = pxPerSecForLevel(s.zoom, cfg)
       const duration = totalDuration(s.data ?? [], cfg)
-      const maxOff = Math.max(0, originX + duration * newScale + cfg.padX * 2 - cw)
-      s.offX = clamp(originX + centerSec * newScale - viewCx, 0, maxOff)
+      const maxOff = Math.max(0, ctx.originX + duration * newScale + cfg.padX * 2 - cw)
+      s.offX = clamp(ctx.originX + centerSec * newScale - viewCx, 0, maxOff)
       if (!s.destroyed) draw()
     },
     getZoom() {
@@ -272,14 +303,14 @@ export async function createTimelineTrack(
         const cw = host.clientWidth || 1280
         const scale = pxPerSecForLevel(s.zoom, cfg)
         const worldW =
-          originX + totalDuration(s.data ?? [], cfg) * scale + cfg.padX * 2
+          ctx.originX + totalDuration(s.data ?? [], cfg) * scale + cfg.padX * 2
         const maxOff = Math.max(0, worldW - cw)
         const hx = timeToX(s.playhead, scale)
         const rightBound = cw - cfg.padX
         if (hx > rightBound) {
           s.offX = clamp(s.offX + (hx - rightBound), 0, maxOff)
-        } else if (hx < originX) {
-          s.offX = clamp(s.offX - (originX - hx), 0, maxOff)
+        } else if (hx < ctx.originX) {
+          s.offX = clamp(s.offX - (ctx.originX - hx), 0, maxOff)
         }
       }
       if (!s.destroyed) scheduleDraw()

@@ -42,8 +42,8 @@ lib/    ES module 构建
 <div id="app" style="width: 100%; height: 100vh"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/pixi.js@8.12.0/dist/pixi.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cut-container@1.0.0/dist/vendor/mediabunny.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cut-container@1.0.0/dist/cut-container.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cut-container@0.0.1/dist/vendor/mediabunny.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cut-container@0.0.1/dist/cut-container.min.js"></script>
 <script>
   const app = CutContainer.createApp({ host: '#app' })
   app.mount()
@@ -66,7 +66,7 @@ lib/    ES module 构建
 }
 </script>
 <script type="module">
-  import { createApp } from 'https://cdn.jsdelivr.net/npm/cut-container@1.0.0/lib/cut-container.min.mjs'
+  import { createApp } from 'https://cdn.jsdelivr.net/npm/cut-container@0.0.1/lib/cut-container.min.mjs'
 
   const app = createApp({ host: '#app' })
   await app.mount()
@@ -362,4 +362,3 @@ await mountEditor(document.getElementById('app')!, { lang: 'zh' })
 
 MIT，详见 [LICENSE](LICENSE)。
 
-内置的 mediabunny 浏览器构建保留其自身许可证：`dist/vendor/LICENSE.mediabunny.txt`。

@@ -19,7 +19,8 @@ export default defineConfig({
     outDir: 'npm-build-dist',
     emptyOutDir: true,
     target: 'es2020',
-    sourcemap: true,
+    // 发布包不带 sourcemap（体积太大，约 10MB+）
+    sourcemap: false,
     minify: false,
     lib: {
       entry: 'src/library/index.ts',

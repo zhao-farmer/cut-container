@@ -253,7 +253,7 @@ export abstract class PlayerBase {
   protected abstract getViewRect(): ViewRect | null
   protected abstract logicalK(rect: { vw: number; vh: number }): number
   protected abstract originClip(): TlClip | null
-  /** 主轨第一个资源的大小；无资源时 1600×9000 */
+  /** 主轨第一个资源的大小；无资源时 1600×900 */
   protected abstract originSize(): { w: number; h: number }
   protected abstract originRatio(): number
   protected abstract relayoutStage(): void

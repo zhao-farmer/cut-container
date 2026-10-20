@@ -29,10 +29,10 @@ export const RATIO_PRESETS: RatioOption[] = [
 ]
 /** 比例菜单中的分组分隔线位置（位于该 key 行之前） */
 export const RATIO_DIVIDERS_BEFORE = ['16:9', '9:16']
-/** 适应（原始）：视图 / 画布取主轨第一个资源的原生大小；没有主轨资源时 1600×9000 */
+/** 适应（原始）：视图 / 画布取主轨第一个资源的原生大小；没有主轨资源时 1600×900（16:9） */
 export const RATIO_FIT: RatioOption = { key: 'fit', label: '适应（原始）', ratio: null }
-/** 主轨没有可参照资源时的默认画布 / 视图大小 */
-export const DEFAULT_ORIGIN_SIZE = { w: 1600, h: 9000 } as const
+/** 主轨没有可参照资源时的默认画布 / 视图大小（16:9，与「16:9」预设同比例） */
+export const DEFAULT_ORIGIN_SIZE = { w: 1600, h: 900 } as const
 
 /**
  * 播放画质：预览管线的三个降负载杠杆（仅影响预览，不影响导出）。

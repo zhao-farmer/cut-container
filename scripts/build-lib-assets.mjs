@@ -27,7 +27,7 @@ await build({
   outfile: path.join(libDir, 'cut-container.min.mjs'),
   bundle: false,
   minify: true,
-  sourcemap: true,
+  sourcemap: false,
   target: 'es2020',
   format: 'esm',
   legalComments: 'none',
@@ -41,14 +41,10 @@ const iifeMin = await transform(iifeCode, {
   minify: true,
   target: 'es2020',
   sourcefile: 'cut-container.js',
-  sourcemap: true,
+  sourcemap: false,
   legalComments: 'none'
 })
-fs.writeFileSync(
-  path.join(distDir, 'cut-container.min.js'),
-  `${iifeMin.code}\n//# sourceMappingURL=cut-container.min.js.map\n`
-)
-if (iifeMin.map) fs.writeFileSync(path.join(distDir, 'cut-container.min.js.map'), iifeMin.map)
+fs.writeFileSync(path.join(distDir, 'cut-container.min.js'), `${iifeMin.code}\n`)
 
 // mediabunny 浏览器全局版：window.Mediabunny（经典脚本）
 await build({
@@ -64,7 +60,7 @@ await build({
   platform: 'browser',
   target: 'es2020',
   minify: true,
-  sourcemap: true,
+  sourcemap: false,
   legalComments: 'none',
   logLevel: 'warning'
 })
@@ -112,6 +108,22 @@ fs.writeFileSync(path.join(pkgDir, 'package.json'), `${JSON.stringify(outPkg, nu
 // 旧构建目录已更名为 npm-build-dist
 const legacyDir = path.join(root, 'dist-lib')
 if (fs.existsSync(legacyDir)) fs.rmSync(legacyDir, { recursive: true, force: true })
+
+// 兜底：发布包不包含 sourcemap，清掉任何残留的 *.map
+let removedMaps = 0
+const walk = dir => {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name)
+    if (entry.isDirectory()) walk(full)
+    else if (entry.name.endsWith('.map')) {
+      fs.rmSync(full)
+      removedMaps++
+    }
+  }
+}
+walk(distDir)
+walk(libDir)
+if (removedMaps) console.log(`[build-lib] 已清理 ${removedMaps} 个残留 .map 文件`)
 
 console.log('[build-lib] npm-build-dist 包内容：')
 for (const name of fs.readdirSync(pkgDir).sort()) {

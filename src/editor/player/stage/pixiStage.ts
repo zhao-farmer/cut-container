@@ -132,7 +132,7 @@ export function PixiStageMixin<TBase extends AbstractCtor<PlayerBase>>(Base: TBa
       const ch = app.screen.height
       if (cw <= 0 || ch <= 0) return null
       // 比例锁定视图矩形：「适应（原始）」取主轨第一个资源大小；
-      // 主轨没有资源时使用默认 1600×9000。
+      // 主轨没有资源时使用默认 1600×900。
       let ratio = this.ratioOption.ratio
       if (this.ratioOption.key === 'fit') ratio = this.originRatio()
       let vw = cw
@@ -181,7 +181,7 @@ export function PixiStageMixin<TBase extends AbstractCtor<PlayerBase>>(Base: TBa
 
     /**
      * 「适应（原始）」依据：主轨（layer 0）上时间最早的视频 / 图片资源。
-     * 主轨没有资源时返回 null，由 originSize 回退到 1600×9000。
+     * 主轨没有资源时返回 null，由 originSize 回退到 1600×900。
      */
     protected originClip(): TlClip | null {
       if (this.tlClips) {
@@ -193,7 +193,7 @@ export function PixiStageMixin<TBase extends AbstractCtor<PlayerBase>>(Base: TBa
       return null
     }
 
-    /** 主轨第一个资源的原生大小；无资源 / 尺寸未知时 1600×9000 */
+    /** 主轨第一个资源的原生大小；无资源 / 尺寸未知时 1600×900 */
     protected originSize(): { w: number; h: number } {
       if (this.tlClips) {
         const clip = this.originClip()

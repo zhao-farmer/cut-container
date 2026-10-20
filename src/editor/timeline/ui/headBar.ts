@@ -26,6 +26,8 @@ export interface HeadBarApi {
   els: HeadEls
   /** 每帧按泳道同步行容器 / 按钮 / 拖放高亮 */
   syncHead: (lanes: Lane[], hasHBar: boolean, allTracksEmpty: boolean) => void
+  /** 全空工程收起轨道头列（宽度 0 + 去掉右侧分隔线），有片段后展开 */
+  setCollapsed: (collapsed: boolean) => void
   destroy: () => void
 }
 
@@ -43,6 +45,8 @@ export function createHeadBar(
    * 行容器随 draw() 的泳道布局同步 top / 高度（含纵移），行内各格用 left 定位。 */
   const root = document.createElement('div')
   root.className = 'ed-tl-head'
+  // 列宽由 JS 内联（空态收起为 0，见 setCollapsed），CSS 里只保留 90px 兜底
+  root.style.width = `${cfg.headWidth}px`
   // DOM 侧可配置项以 CSS 变量下发（按钮底色 / hover、标尺区高度、泳道底色、头列底色 / 分隔线）
   root.style.setProperty('--tl-btn-bg', cfg.commonButtonBgColor)
   root.style.setProperty('--tl-btn-hover', cfg.commonButtonHoverColor)
@@ -270,6 +274,12 @@ export function createHeadBar(
   }
   root.addEventListener('click', onClick)
 
+  /** 全空工程：轨道头列宽度归零（右侧分隔线一并隐藏）；有片段时按 cfg.headWidth 恢复 */
+  function setCollapsed(collapsed: boolean) {
+    root.classList.toggle('is-collapsed', collapsed)
+    root.style.width = collapsed ? '0px' : `${cfg.headWidth}px`
+  }
+
   function destroy() {
     root.removeEventListener('click', onClick)
     rowMap.clear()
@@ -277,5 +287,5 @@ export function createHeadBar(
     root.remove()
   }
 
-  return { els, syncHead, destroy }
+  return { els, syncHead, setCollapsed, destroy }
 }

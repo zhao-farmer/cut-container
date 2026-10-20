@@ -91,6 +91,8 @@
   border-right: 1px solid var(--tl-divider, #2a2a30);
   overflow: hidden;
 }
+/* 全空工程：宽度由 JS 内联为 0（时间轴铺满整宽），这里只负责去掉分隔线 */
+.ed-tl-head.is-collapsed { border-right: 0; }
 /* 顶部标尺区（高度对齐 timelineHeight）：div 保留用于布局占位，不展示任何样式
    （无标尺细线、无独立底色，透出与外部一致的 .ed-tl-head 背景） */
 .ed-tl-head-top {

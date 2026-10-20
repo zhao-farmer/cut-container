@@ -20,7 +20,7 @@ export function MenusMixin<TBase extends AbstractCtor<PlayerBase>>(Base: TBase) 
     protected toggleRatioMenu() {
       this.openPopover(this.ratioBtn, box => {
         // 顶部特殊项合并为一个「适应（原始）」：
-        // 大小取主轨第一个资源，没有主轨资源时使用 1600×9000。
+        // 大小取主轨第一个资源，没有主轨资源时使用 1600×900。
         const specials: Array<{ opt: RatioOption }> = [
           { opt: RATIO_FIT }
         ]
