@@ -21,6 +21,7 @@ import {
   Mp4OutputFormat,
   Output
 } from 'mediabunny'
+import type { MetadataTags } from 'mediabunny'
 import type { MediaSourceDecoder } from './playerMediaSourceDecoder'
 
 /** 离线混音需要的片段窄结构（TlClip 结构化兼容，与 PlayerMixer.MixClip 同口径） */
@@ -62,6 +63,10 @@ export interface TimelineExportOptions {
   onProgress?: (phase: 'video' | 'audio' | 'mux', ratio: number) => void
   /** 取消令牌：cancelled=true 时尽快中止并抛 'abort' */
   signal?: { cancelled: boolean }
+  /** 封面图（写入 MP4 元信息 covr 封面，不占用首帧）；JPEG / PNG / BMP 原始字节 */
+  cover?: { data: Uint8Array; mimeType: string } | null
+  /** 作品标题（写入 MP4 元信息 title） */
+  title?: string
 }
 
 /** 离线混音采样率（AAC 常规 48k；源缓冲采样率不同时 Web Audio 自动重采样） */
@@ -177,6 +182,23 @@ export async function exportTimelineMp4(opts: TimelineExportOptions): Promise<Ar
   if (hasAudio) {
     audioSource = new AudioBufferSource({ codec: 'aac', bitrate: 192_000 })
     output.addAudioTrack(audioSource)
+  }
+  // —— 元信息：封面（moov/udta/meta/ilst 里的 covr 封面图）+ 标题 ——
+  // 必须在 start() 之前设置；封面不等于首帧：播放器读的是元信息里的缩略图。
+  // 目前 mediabunny 的 MP4 封装只支持 JPEG / PNG / BMP 的 data-box 类型标记，
+  // 调用方（editorPage）已统一转成 JPEG 再传进来。
+  const tags: MetadataTags = {}
+  if (opts.title) tags.title = opts.title
+  if (opts.cover && opts.cover.data.byteLength > 0) {
+    tags.images = [{ data: opts.cover.data, mimeType: opts.cover.mimeType, kind: 'coverFront' }]
+  }
+  if (tags.title || tags.images) {
+    try {
+      output.setMetadataTags(tags)
+    } catch (err) {
+      // 元信息不是成片必需项：任何写入失败都不阻断导出
+      console.warn('[export] 元信息写入失败，已忽略封面 / 标题:', err)
+    }
   }
   await output.start()
 

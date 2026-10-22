@@ -79,7 +79,7 @@ export function PixiStageMixin<TBase extends AbstractCtor<PlayerBase>>(Base: TBa
           resized = true
         }
         this.relayoutStage()
-        if (resized) app.renderer.render(app.stage)
+        if (resized) app.render()
       })
       this.resizeObs.observe(this.stageEl)
 
@@ -113,7 +113,7 @@ export function PixiStageMixin<TBase extends AbstractCtor<PlayerBase>>(Base: TBa
       const ctx = canvas.getContext('2d')!
       ctx.fillStyle = '#000'
       ctx.fillRect(0, 0, w, h)
-      const source = new PIXI.CanvasSource({ resource: canvas, scaleMode: PIXI.SCALE_MODES.LINEAR })
+      const source = new PIXI.CanvasSource({ resource: canvas, scaleMode: 'linear' })
       const texture = new PIXI.Texture({ source })
       this.offCanvas = canvas
       this.offCtx = ctx

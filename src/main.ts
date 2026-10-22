@@ -311,36 +311,46 @@ function createMenu(label: string, items: MenuItemDef[]): HTMLDivElement {
 // ====================== 弹窗（使用文档 / 关于） ======================
 const USAGE_HTML = `
   <div class="ed-doc">
-    <h4>快速上手</h4>
-    <ul>
-      <li><b>切换父框架</b>：点击顶部 Vue3 / React / Svelte / SolidJS 按钮，四种外部框架加载的是同一个编辑器页面。</li>
-      <li><b>素材库</b>：左侧"素材 / 音频 / 文本 / 贴纸"选项卡浏览素材；点击带缩略图的视频素材即可载入中间播放器。</li>
-      <li><b>预览播放</b>：中间播放器基于 mediabunny + WebCodecs 真实解码，支持播放 / 暂停 / 进度跳转。</li>
-      <li><b>草稿与数据</b>：右栏「草稿信息」可修改草稿名称、查看比例 / 画布宽高 / 分辨率 / 帧率；「文件」菜单可导入 / 导出配置（JSON）或清除本地缓存。</li>
-      <li><b>时间轴</b>：底部轨道由 pixi.js 按轨道操作数据渲染；拖动左、右、下三条分隔条可调整各区域大小。</li>
-      <li><b>数据保存</b>：外部框架传入的素材原始数据与轨道操作数据会自动保存到浏览器 localStorage，刷新页面后优先读取本地数据。</li>
-    </ul>
+    <div class="ed-doc-nav">
+      <button type="button" class="ed-doc-tab is-on" data-doc-tab="start">快速上手</button>
+      <button type="button" class="ed-doc-tab" data-doc-tab="keys">快捷键</button>
+    </div>
+    <div class="ed-doc-panes">
+      <div class="ed-doc-pane is-on" data-doc-pane="start">
+        <ul>
+          <li><b>切换父框架</b>：顶部 Vue3 / React / Svelte / SolidJS 按钮，四种外部框架加载同一个编辑器页面。</li>
+          <li><b>素材库</b>：左侧「素材 / 音频 / 文本 / 贴纸」浏览；「导入」上传本地文件，卡片悬停点 + 加入时间轴，右键可重命名 / 删除。素材与轨道自动保存在 localStorage。</li>
+          <li><b>播放器</b>：mediabunny + WebCodecs 真实解码，支持播放 / 暂停 / 拖动进度；全屏播放时可用空格与方向键控制。</li>
+          <li><b>时间轴</b>：pixi.js 渲染轨道与缩略格；右侧滑杆分级缩放，缩略格按帧缓存、缩放只复用不重解；拖动左 / 右 / 下分隔条调整各区域大小。</li>
+          <li><b>封面设计</b>：点时间轴左侧「封面」打开。「主轨抽帧」按帧选画面（黄线定位当前帧），「上传封面」选本地图片；取景框四角等比缩放、框内拖动平移，「完成裁剪」把结果放回画布，撤销 / 恢复最多保留 5 张。</li>
+          <li><b>导出</b>：<kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>E</kbd> 或右上「导出视频」。封面会写入 MP4 的 <code>covr</code> 元信息（不是首帧）。</li>
+          <li><b>草稿与数据</b>：右栏「草稿信息」修改名称、查看比例 / 画布宽高 / 分辨率 / 帧率；「文件」菜单导入导出配置（JSON）、清除本地缓存。</li>
+          <li><b>后端模式</b>：配置 <code>backend.mode</code> 为 <code>local</code>（纯前端）/ <code>remote</code>（纯后端）/ <code>hybrid</code>（只从后端取素材，导入删除改名都留在前端）。</li>
+        </ul>
+      </div>
 
-    <h4>快捷键</h4>
-    <table class="ed-doc-keys">
-      <tbody>
-        <tr><td><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>C</kbd></td><td>复制选中的片段</td></tr>
-        <tr><td><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>X</kbd></td><td>剪切选中的片段</td></tr>
-        <tr><td><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>V</kbd></td><td>粘贴片段</td></tr>
-        <tr><td><kbd>Delete</kbd> / <kbd>Backspace</kbd></td><td>删除选中的片段</td></tr>
-        <tr><td><kbd>Alt</kbd> + <kbd>←</kbd> / <kbd>→</kbd></td><td>选中片段前后移动一帧</td></tr>
-        <tr><td><kbd>M</kbd></td><td>在播放头位置添加 / 移除标记</td></tr>
-        <tr><td><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>E</kbd></td><td>导出视频</td></tr>
-        <tr><td><kbd>Space</kbd></td><td>全屏播放器中播放 / 暂停</td></tr>
-        <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>全屏播放器中快退 / 快进 5 秒</td></tr>
-        <tr><td><kbd>Shift</kbd> + <kbd>←</kbd> / <kbd>→</kbd></td><td>全屏播放器中逐帧后退 / 前进</td></tr>
-        <tr><td><kbd>Esc</kbd></td><td>关闭弹窗 / 菜单，或退出文字编辑</td></tr>
-      </tbody>
-    </table>
-    <p class="ed-doc-tip">输入框、文本域内不会触发片段编辑快捷键；全屏快捷键仅在播放器全屏时生效。</p>
+      <div class="ed-doc-pane" data-doc-pane="keys">
+        <table class="ed-doc-keys">
+          <tbody>
+            <tr><td><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>C</kbd></td><td>复制选中的片段</td></tr>
+            <tr><td><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>X</kbd></td><td>剪切选中的片段</td></tr>
+            <tr><td><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>V</kbd></td><td>粘贴片段</td></tr>
+            <tr><td><kbd>Delete</kbd> / <kbd>Backspace</kbd></td><td>删除选中的片段</td></tr>
+            <tr><td><kbd>Alt</kbd> + <kbd>←</kbd> / <kbd>→</kbd></td><td>选中片段前后移动一帧</td></tr>
+            <tr><td><kbd>M</kbd></td><td>在播放头位置添加 / 移除标记</td></tr>
+            <tr><td><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>E</kbd></td><td>导出视频</td></tr>
+            <tr><td><kbd>Ctrl</kbd> / <kbd>⌘</kbd> + <kbd>Shift</kbd> + <kbd>Backspace</kbd></td><td>清除本地素材缓存</td></tr>
+            <tr><td><kbd>Space</kbd></td><td>全屏播放器中播放 / 暂停</td></tr>
+            <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>全屏播放器中快退 / 快进 5 秒</td></tr>
+            <tr><td><kbd>Shift</kbd> + <kbd>←</kbd> / <kbd>→</kbd></td><td>全屏播放器中逐帧后退 / 前进</td></tr>
+            <tr><td><kbd>Esc</kbd></td><td>关闭弹窗 / 菜单，或退出文字编辑</td></tr>
+          </tbody>
+        </table>
+        <p class="ed-doc-tip">输入框、文本域内不会触发片段编辑快捷键；全屏快捷键仅在播放器全屏时生效。</p>
+      </div>
+    </div>
   </div>
 `
-
 const ABOUT_HTML = `
   <div class="ed-about">
     <div class="ed-about-name">CutContainer 剪辑</div>
@@ -370,6 +380,22 @@ function showModal(title: string, bodyHtml: string) {
         <button type="button" class="ed-modal-ok">我知道了</button>
       </div>
     </div>`
+
+  // 文档弹窗更宽一些，避免快捷键表换行
+  if (mask.querySelector('.ed-doc')) mask.querySelector('.ed-modal')?.classList.add('ed-modal-doc')
+
+  // 文档弹窗的左侧导航：点击切换面板
+  mask.querySelectorAll<HTMLElement>('[data-doc-tab]').forEach(tab => {
+    tab.addEventListener('click', () => {
+      const key = tab.dataset.docTab
+      mask.querySelectorAll('[data-doc-tab]').forEach(t => {
+        t.classList.toggle('is-on', (t as HTMLElement).dataset.docTab === key)
+      })
+      mask.querySelectorAll('[data-doc-pane]').forEach(p => {
+        p.classList.toggle('is-on', (p as HTMLElement).dataset.docPane === key)
+      })
+    })
+  })
 
   const onKey = (e: KeyboardEvent) => {
     if (e.key === 'Escape') close()

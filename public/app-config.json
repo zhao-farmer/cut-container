@@ -1,6 +1,6 @@
 {
   "backend": {
-    "enabled": true,
+    "mode": "remote",
     "baseUrl": "http://localhost:3001",
     "timeoutMs": 8000
   }

@@ -92,15 +92,27 @@ body {
 .ed-modal-body ul { margin: 0; padding-left: 18px; }
 .ed-modal-body li { margin-bottom: 6px; }
 .ed-modal-body b { color: #fff; font-weight: 600; }
-/* 使用文档 · 快捷键表 */
-.ed-modal-body h4:not(:first-child) { margin-top: 16px; }
+/* 使用文档：宽弹窗 + 左侧导航 + 右侧面板 */
+.ed-modal-doc { width: 620px; }
+.ed-modal-doc .ed-modal-body { padding: 16px 20px; }
+.ed-doc { display: flex; gap: 16px; align-items: flex-start; }
+.ed-doc-nav { flex: none; width: 92px; display: flex; flex-direction: column; gap: 4px; }
+.ed-doc-tab {
+  padding: 6px 10px; border: 0; border-radius: 6px; text-align: left;
+  background: transparent; color: var(--ed-muted); font-size: 12px; cursor: pointer;
+}
+.ed-doc-tab:hover { background: #2c2c33; color: var(--ed-text); }
+.ed-doc-tab.is-on { background: rgba(24, 185, 212, .14); color: var(--ed-accent); font-weight: 600; }
+.ed-doc-panes { flex: 1; min-width: 0; }
+.ed-doc-pane { display: none; }
+.ed-doc-pane.is-on { display: block; }
 .ed-doc-keys { width: 100%; border-collapse: collapse; margin-top: 2px; }
 .ed-doc-keys td {
   padding: 4px 0; border-bottom: 1px solid rgba(255,255,255,.06);
   vertical-align: middle;
 }
 .ed-doc-keys tr:last-child td { border-bottom: 0; }
-.ed-doc-keys td:first-child { width: 46%; white-space: nowrap; color: #d8d8dd; }
+.ed-doc-keys td:first-child { width: 50%; white-space: nowrap; color: #d8d8dd; }
 .ed-doc-keys td:last-child { color: var(--ed-muted); }
 .ed-doc kbd {
   display: inline-block; min-width: 14px; padding: 1px 5px; margin: 0 1px;

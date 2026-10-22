@@ -10,7 +10,15 @@ import type { TimelineConfig } from '../core/config'
 import { isGifItem, sourceDurationOf } from '../core/helpers'
 import { formatTimecode } from '../../utils/time'
 import { tabIconDoc } from '../../utils/icons'
+import { retainTexture, releaseTexture } from '../../utils/textureRefs'
 import type { Texture } from 'pixi.js'
+
+/** 波形分块的像素宽（1:1 烘焙，不做横向拉伸） */
+const WAVE_CHUNK_PX = 4096
+/** 单片段最多缓存的波形块数 */
+const WAVE_CHUNK_CACHE = 24
+/** 每帧最多发起的缩略格抽帧请求数（高缩放下分批补格，避免解码队列打满） */
+const MEDIA_REQUESTS_PER_FRAME = 6
 
 /** 特效 / 滤镜前缀图标纹理缓存：直接光栅化素材库分类同款白色 SVG，全时间轴共享 */
 const chipIconTextureCache = new Map<'effect' | 'filter', Promise<Texture | null>>()
@@ -106,6 +114,12 @@ export class ClipView {
   private cellWant = ''
   /** 缩略格请求代数：zoom / 入点 / 高度变化时自增，使在途请求失效 */
   private cellGen = 0
+  /** 除缩放外的格签名（块高 / GIF 入点）：变了就整批重建，缩放变化才复用旧帧 */
+  private cellSig = ''
+  /** 当前 cells 对应的缩放级别（放大复制 / 缩小抽稀的依据） */
+  private cellLevel = 0
+  /** 已发出、尚未返回的缩略格请求：避免同一格在等待期间被重复请求（放大时会解帧风暴） */
+  private pendingCells = new Set<number>()
   private videoAudioBuf: AudioBuffer | null = null
   private videoAudioTried = false
 
@@ -113,9 +127,18 @@ export class ClipView {
   private audioBuf: AudioBuffer | null = null
   private audioTried = false
 
-  /** 波形 Graphics（视频内嵌音轨 / 独立音频共用） */
-  private waveGfx: import('pixi.js').Graphics | null = null
-  private waveSig = ''
+  /**
+   * 波形分块（1:1 逐像素烘焙的纹理精灵，不做任何横向拉伸）。
+   * - 块按源时间对齐，滚动只在跨块时补烘焙一块，块内只平移；
+   * - 缩放 / 轨道高变化才换 key 重建；
+   * - 音量（dB）不进 key：只用精灵 scale.y 改高度，不重新渲染（对齐剪映）。
+   */
+  private waveChunks = new Map<
+    string,
+    { sp: import('pixi.js').Sprite; tex: import('pixi.js').Texture; startSec: number }
+  >()
+  /** 波形带底色（常量矩形，与波形分开画：音量缩放时底色不变） */
+  private waveBgG: import('pixi.js').Graphics
 
   /** 图标 / 文字白色半透明底板（装饰轨片段块专用） */
   private chipG: import('pixi.js').Graphics
@@ -203,7 +226,9 @@ export class ClipView {
     })
     this.mediaC.addChild(this.mediaMask)
     this.mediaC.mask = this.mediaMask
-    this.waveC.addChild(this.waveMask)
+    // 波形带底色在最底层，波形分块精灵叠在上面（音量缩放只影响波形，不动底色）
+    this.waveBgG = new T.Graphics()
+    this.waveC.addChild(this.waveBgG, this.waveMask)
     this.waveC.mask = this.waveMask
     this.labelC.addChild(this.chipG, this.prefixG, this.timeBg, this.label, this.timeLabel)
     this.container.addChild(this.bgG, this.mediaC, this.waveC, this.labelMask, this.labelC, this.audioG, this.selG)
@@ -510,6 +535,56 @@ export class ClipView {
    *   asconfig offsetL/offsetR：storyboard 世界固定、mask 裁切）。
    * - GIF（循环铺格）：格序号相对块左缘，入点变化随签名整体重建。
    */
+  /** 旧帧全部作废（块高 / 入点变化时整批重建） */
+  private dropCells() {
+    for (const sp of this.cells.values()) {
+      this.mediaC.removeChild(sp)
+      releaseTexture(sp.texture as Texture)
+      sp.destroy()
+    }
+    this.cells.clear()
+    this.cellKeys.clear()
+    this.pendingCells.clear()
+    this.cellGen++
+  }
+
+  /**
+   * 仅缩放级别变化时复用已有缩略格（对齐参考 scaleTrackShowMedia）：
+   * - 放大 2^d 倍：旧格内容保留、挪到 i·2^d 位置（1 2 3 4 → 1 3 5 7），
+   *   空出来的格子由选帧队列补解析（画面先有底、再逐格变清晰，不闪空）；
+   * - 缩小 2^d 倍：每隔 2^d 格保留一格，其余销毁；
+   * - 跨度超过 3 级（拖滑杆一次跳很多级）直接整批重建，避免精灵数量爆炸。
+   */
+  private remapCells(newLevel: number, want: string) {
+    const d = newLevel - this.cellLevel
+    if (!d) return
+    if (Math.abs(d) > 3) {
+      this.dropCells()
+      this.cellLevel = newLevel
+      return
+    }
+    const k = 2 ** Math.abs(d)
+    const next = new Map<number, import('pixi.js').Sprite>()
+    if (d > 0) {
+      for (const [i, sp] of this.cells) next.set(i * k, sp)
+    } else {
+      for (const [i, sp] of this.cells) {
+        if (i % k === 0) {
+          next.set(i / k, sp)
+        } else {
+          this.mediaC.removeChild(sp)
+          releaseTexture(sp.texture as Texture)
+          sp.destroy()
+        }
+      }
+    }
+    this.cells = next
+    this.cellKeys.clear()
+    for (const idx of this.cells.keys()) this.cellKeys.set(idx, want)
+    this.pendingCells.clear()
+    this.cellGen++
+    this.cellLevel = newLevel
+  }
   private visibleRange(cw: number, side = 0) {
     const g = this.geom
     const cellW = this.cfg.trackMediaWidth
@@ -573,23 +648,84 @@ export class ClipView {
       // 视频格锚定源时间（见 visibleRange）：签名只含 zoom/高，拖裁改入点不重建；
       // GIF 循环铺格仍以块左缘为 0 号格，入点变化需整体重建。
       const anchored = item.type === 'video'
-      const want = anchored
-        ? `v|${rctx.zoom}|${Math.round(g.mediaH)}`
-        : `g|${rctx.zoom}|${ss.toFixed(3)}|${Math.round(g.mediaH)}`
-      const wantChanged = want !== this.cellWant
-      if (wantChanged) {
-        this.cellWant = want
-        this.cellGen++
+      // 缩略格缓存的分层复用（对齐参考实现 scaleTrackShowMedia）：
+      // - 块高 / GIF 入点变化 → 旧帧作废，整批重建；
+      // - 仅缩放级别变化 → 复用旧帧：放大 2^d 倍时把每格「复制」成 2^d 格，
+      //   缩小 2^d 倍时每隔 2^d 格保留一格 —— 不重新解析。
+      const cellSig = anchored
+        ? `v|${Math.round(g.mediaH)}`
+        : `g|${ss.toFixed(3)}|${Math.round(g.mediaH)}`
+      const want = `${cellSig}|${rctx.zoom}`
+      let wantChanged = false
+      if (cellSig !== this.cellSig) {
+        // 块高 / 入点变化：必须整批重建
+        this.dropCells()
+        this.cellSig = cellSig
+        this.cellLevel = rctx.zoom
+        wantChanged = true
+      } else if (rctx.zoom !== this.cellLevel) {
+        // 仅缩放变化：复用旧帧（放大挪到 i·k、缩小抽稀），空位由选帧队列补
+        this.remapCells(rctx.zoom, want)
+        wantChanged = true
       }
+      this.cellWant = want
       const gen = this.cellGen
       // 格序号 → 世界 x：视频 = g.x + j·cellW - ss·scale（内容世界固定）；GIF = 块左缘起
       const posX = (i: number, sss: number, gx: number) =>
         anchored ? gx + i * cellW - sss * rctx.scale : gx + i * cellW
 
+      // 视频内嵌音轨的波形 + 音量覆盖层：必须每帧跟随块几何（横滚节流帧也要走），
+      // 否则横滚时它会「停住 → 半秒后才跳过去」。受节流限制的只有抽帧 / 窗口增删。
+      const url = (item.source as { url: string }).url
+      if (item.type === 'video') {
+        if (!this.videoAudioTried) {
+          this.videoAudioTried = true
+          this.store
+            .getVideo(url)
+            .getAudio()
+            .then(buf => {
+              if (this.destroyed) return
+              this.videoAudioBuf = buf
+              // 通知外层真实音轨探测结果（右侧面板据此决定是否显示音量控制组）
+              this.onAudioProbed?.(hasValidAudio(buf))
+              this.invalidate()
+            })
+            .catch(() => {})
+        }
+        // 波形 / 覆盖层出任何异常都不能拖垮整块的缩略格刷新
+        try {
+          if (this.videoAudioBuf) {
+          // 音量（含片段静音）作为波形增益：分贝改变 → 柱高随动（与音频块同口径）
+          const gain = (item as { muted?: boolean; volume?: number }).muted
+            ? 0
+            : Math.min(10, Math.max(0, item.volume ?? 1))
+          this.syncWave(this.videoAudioBuf, {
+            gx: g.x,
+            gw: g.w,
+            y: g.waveY,
+            h: g.waveH,
+            bg: this.cfg.videoWaveBg,
+            wave: this.cfg.mediaLineColor,
+            ss,
+            scale: rctx.scale,
+            zoom: rctx.zoom,
+            cw: rctx.cw,
+            kind: 'v',
+            gain
+          })
+            // 音量白线 / 淡入淡出小球覆盖层（与独立音频块同一套绘制）
+            this.syncAudioOverlay(g, rctx.scale)
+          }
+        } catch (err) {
+          console.warn('[clip] 波形绘制失败：', err)
+        }
+      }
+
       // 1. 每帧必做：签名过期的格销毁，其余立即按最新几何重定位（横滚时紧随块移动）
       for (const [i, sp] of Array.from(this.cells)) {
         if (this.cellKeys.get(i) !== want) {
           this.mediaC.removeChild(sp)
+          releaseTexture(sp.texture as Texture)
           sp.destroy()
           this.cells.delete(i)
           this.cellKeys.delete(i)
@@ -611,6 +747,7 @@ export class ClipView {
       for (const [i, sp] of Array.from(this.cells)) {
         if (i < firstI || i > lastI) {
           this.mediaC.removeChild(sp)
+          releaseTexture(sp.texture as Texture)
           sp.destroy()
           this.cells.delete(i)
           this.cellKeys.delete(i)
@@ -621,7 +758,6 @@ export class ClipView {
       //    纹理缓存在 MediaStore LRU
       const cellSec = cellW / rctx.scale
       const srcDur = sourceDurationOf(item)
-      const url = (item.source as { url: string }).url
       const h = Math.max(1, Math.round(g.mediaH))
       // GIF 帧来自内嵌解码器，视频帧来自 mediabunny，接口一致
       const cellMedia = item.type === 'video' ? this.store.getVideo(url) : this.store.getGif(url)
@@ -632,8 +768,12 @@ export class ClipView {
         ? (item.source as { duration?: number }).duration ?? 0
         : 0
       const span = Math.max(0.04, Math.min(dur, srcDur) - 0.02)
+      // 每帧最多发起的抽帧请求数：高缩放下视口一次需要几十格，若一次性全发，
+      // 解码队列会被打满（卡住 + GPU 长时间 100%）。分批请求，剩下的下一帧继续。
+      let cellBudget = MEDIA_REQUESTS_PER_FRAME
       for (let i = firstI; i <= lastI; i++) {
-        if (this.cells.has(i)) continue
+        if (this.cells.has(i) || this.pendingCells.has(i)) continue
+        if (cellBudget-- <= 0) break
         const rawT = anchored ? (i + 0.5) * cellSec : ss + (i + 0.5) * cellSec
         let t: number
         if (gifDur > 0) {
@@ -643,11 +783,17 @@ export class ClipView {
         } else {
           t = Math.max(ss + 0.01, Math.min(rawT, ss + span))
         }
+        // 按帧号量化请求时刻：不同缩放下只要指向同一帧，MediaStore 的缓存就能命中，
+        // 不会出现「同一格换个缩放就变成另一帧」的错位
+        t = Math.round(t * this.cfg.fps) / this.cfg.fps
         const idx = i
+        this.pendingCells.add(idx)
         cellMedia
           .requestCell(t, cellW, h)
           .then(tex => {
-            if (this.destroyed || !tex || gen !== this.cellGen || this.cells.has(idx)) return
+            this.pendingCells.delete(idx)
+            // tex.source 为空 = 该纹理已被别处销毁，直接丢弃（下一帧会重新请求）
+            if (this.destroyed || !tex || !tex.source || gen !== this.cellGen || this.cells.has(idx)) return
             const r = this.visibleRange(
               // cw 用当前几何推算视口宽度不现实，回调时用全局视口即可
               this.lastCw,
@@ -656,6 +802,8 @@ export class ClipView {
             if (idx < r.firstI || idx > r.lastI) return
             const gg = this.geom
             const sp = new this.T.Sprite(tex)
+            // 持有期间禁止 MediaStore 的 LRU 销毁该纹理（否则精灵会拿到已销毁纹理）
+            retainTexture(tex)
             sp.width = cellW
             sp.height = gg.mediaH
             sp.position.set(posX(idx, this.sourceStart, gg.x), gg.mediaY)
@@ -664,48 +812,14 @@ export class ClipView {
             this.cellKeys.set(idx, want)
             this.invalidate()
           })
-          .catch(() => {})
+          .catch(() => {
+            // 抽帧失败：解除 pending，下一帧还会重试
+            this.pendingCells.delete(idx)
+          })
       }
 
-      // 3. 视频内嵌音轨：只解析一次，到位后刷新波形 + 音量覆盖层（GIF 无音轨）
-      if (item.type === 'video') {
-        if (!this.videoAudioTried) {
-          this.videoAudioTried = true
-          this.store
-            .getVideo(url)
-            .getAudio()
-            .then(buf => {
-              if (this.destroyed) return
-              this.videoAudioBuf = buf
-              // 通知外层真实音轨探测结果（右侧面板据此决定是否显示音量控制组）
-              this.onAudioProbed?.(hasValidAudio(buf))
-              this.invalidate()
-            })
-            .catch(() => {})
-        }
-        if (this.videoAudioBuf) {
-          // 音量（含片段静音）作为波形增益：分贝改变 → 柱高随动（与音频块同口径）
-          const gain = (item as { muted?: boolean; volume?: number }).muted
-            ? 0
-            : Math.min(10, Math.max(0, item.volume ?? 1))
-          this.syncWave(this.videoAudioBuf, {
-            gx: g.x,
-            y: g.waveY,
-            h: g.waveH,
-            bg: this.cfg.videoWaveBg,
-            wave: this.cfg.mediaLineColor,
-            ss,
-            scale: rctx.scale,
-            zoom: rctx.zoom,
-            cw: rctx.cw,
-            kind: 'v',
-            gain
-          })
-          // 音量白线 / 淡入淡出小球覆盖层（与独立音频块同一套绘制）
-          this.syncAudioOverlay(g, rctx.scale)
-        }
-      }
       return
+
     }
 
     /* ---------------- 音频：解码一次，整块画 dB 波形 ---------------- */
@@ -729,6 +843,7 @@ export class ClipView {
           : Math.min(10, Math.max(0, item.volume ?? 1))
         this.syncWave(this.audioBuf, {
           gx: g.x,
+          gw: g.w,
           y: g.waveY,
           h: g.waveH,
           bg: this.cfg.audioWaveBg,
@@ -936,11 +1051,11 @@ export class ClipView {
     if (fi > 0) drawFadeIn()
     if (fo > 0) drawFadeOut()
 
-    // 音量白线（常驻，受 hover 影响）
+    // 音量白线（常驻，受 hover 影响）：0.5px 极细线，贴近剪映的观感
     this.audioG
       .moveTo(g.x + 3, vy)
       .lineTo(g.x + g.w - 3, vy)
-      .stroke({ width: 1, color: 0xffffff, alpha: 0.95 * base, cap: 'round' })
+      .stroke({ width: 0.5, color: 0xffffff, alpha: 0.95 * base, cap: 'round' })
 
     // 两个淡变小球：仅悬停绘制；1px 黑心 + 2px 白描边（外圆 r=4, stroke w=2）
     if (ballVisible) {
@@ -973,6 +1088,8 @@ export class ClipView {
     o: {
       gx: number
       y: number
+      /** 片段可视宽度（px）：波形带底色按它铺满 */
+      gw: number
       h: number
       bg: number
       wave: number
@@ -992,39 +1109,76 @@ export class ClipView {
     const tL = Math.max(0, o.ss + (this.cfg.headWidth - pad - o.gx) / o.scale)
     const tR = Math.min(maxT, o.ss + (o.cw + pad - o.gx) / o.scale)
     const inWindow = tR - tL >= 1 / o.scale
-    if (this.waveGfx) this.waveGfx.visible = inWindow
-    if (!inWindow) return
-    // 64px 世界粒度归格：横滚 / 移动的小位移复用旧条；拖裁内收 tL/tR 完全不变
-    const gridSec = 64 / o.scale
-    const tA = Math.floor(tL / gridSec) * gridSec
-    const tB = Math.ceil(tR / gridSec) * gridSec
-    const wpx = Math.max(1, Math.round((tB - tA) * o.scale))
-    // 增益按 0.01 量化入键：拖白线连续变动时重烘焙次数可控，同一音量始终命中同一纹理
-    const gQ = Math.round(Math.max(0, o.gain ?? 1) * 100)
-    const key = `${o.kind}|${o.zoom}|${Math.round(o.h)}|${Math.round(tA * o.scale)}|${wpx}|g${gQ}`
-    if (key !== this.waveSig) {
-      if (this.waveGfx) {
-        this.waveC.removeChild(this.waveGfx)
-        this.waveGfx.destroy()
-        this.waveGfx = null
+    const bandH = Math.max(1, Math.round(o.h))
+    // 15px 音频带只用上部 12px 渲染波形（顶部留 3px 空档，对齐剪映观感）；
+    // 带底色仍铺满整条 15px，保证轨道块底色连续。
+    const h = Math.max(1, bandH - 3)
+    // 音量（dB）变化要重新从 AudioBuffer 采样渲染：dB→柱高是非线性映射，
+    // 单纯纵向缩放会把 -6dB 的橙色警示区一起压扁/裁掉，看起来像"没有警示"。
+    // 因此 gain 进缓存 key，改音量即重烘焙这一块的 canvas（单块 4–5ms）。
+    const gain = Math.max(0, o.gain ?? 1)
+    const gQ = Math.round(gain * 100)
+    // 波形带底色：常量矩形，单独画（音量缩放只作用于波形柱，不动底色）
+    this.waveBgG.clear().rect(o.gx, o.y, Math.max(1, o.gw), bandH).fill(o.bg)
+    // 波形分块：1:1 逐像素烘焙（不做任何横向拉伸），块按源时间对齐，
+    // 滚动只在跨块时补烘焙一块，块内只平移；缩放 / 轨道高变化才换 key 重建。
+    const chunkSec = WAVE_CHUNK_PX / o.scale
+    const keep = new Set<string>()
+    if (inWindow) {
+      const firstIdx = Math.max(0, Math.floor(tL / chunkSec))
+      const lastIdx = Math.max(0, Math.floor(tR / chunkSec))
+      for (let idx = firstIdx; idx <= lastIdx; idx++) {
+        const from = idx * chunkSec
+        const dur = Math.min(maxT, from + chunkSec) - from
+        if (dur <= 1e-4) continue
+        const key = `${o.kind}|${o.zoom}|${h}|${gQ}|${idx}`
+        keep.add(key)
+        let c = this.waveChunks.get(key)
+        if (!c) {
+          const wpx = Math.max(1, Math.round(dur * o.scale))
+          const tex = this.waveform.buildTexture({
+            buffer: buf,
+            offset: from,
+            duration: dur,
+            width: wpx,
+            height: h,
+            wave: o.wave,
+            secPerPx: 1 / o.scale,
+            gain
+          })
+          const sp = new this.T.Sprite(tex)
+          // 底边锚定：音量缩放时波形柱向上长，不改变底色带
+          sp.anchor.set(0, 1)
+          this.waveC.addChild(sp)
+          c = { sp, tex, startSec: from }
+          this.waveChunks.set(key, c)
+          this.pruneWaveChunks(keep)
+        }
+        c.sp.visible = true
+        // 取整到像素：滚动时亚像素偏移会让 1px 波形线忽明忽暗地闪
+        c.sp.position.set(
+          Math.round(o.gx + (c.startSec - o.ss) * o.scale),
+          Math.round(o.y + bandH)
+        )
       }
-      const gfx = this.waveform.build({
-        buffer: buf,
-        offset: tA,
-        duration: wpx / o.scale,
-        width: wpx,
-        height: Math.max(1, Math.round(o.h)),
-        bg: o.bg,
-        wave: o.wave,
-        secPerPx: 1 / o.scale,
-        gain: o.gain ?? 1
-      })
-      this.waveGfx = gfx
-      this.waveC.addChild(gfx)
-      this.waveSig = key
     }
-    this.waveGfx?.position.set(o.gx + (tA - o.ss) * o.scale, o.y)
+    for (const [key, c] of this.waveChunks) {
+      if (!keep.has(key)) c.sp.visible = false
+    }
   }
+
+  /** 波形块缓存上限：超出时按插入顺序淘汰（保留当前可见块） */
+  private pruneWaveChunks(keep: Set<string>) {
+    for (const [key, c] of this.waveChunks) {
+      if (this.waveChunks.size <= WAVE_CHUNK_CACHE) return
+      if (keep.has(key)) continue
+      if (c.sp.parent) c.sp.parent.removeChild(c.sp)
+      c.sp.destroy({ texture: false })
+      c.tex.destroy(true)
+      this.waveChunks.delete(key)
+    }
+  }
+
 
   destroy() {
     this.destroyed = true
@@ -1035,7 +1189,22 @@ export class ClipView {
       this.chipIcon.destroy({ texture: false })
       this.chipIcon = null
     }
-    // 共享纹理（抽帧 / 瓦片）由 MediaStore 统一释放，这里只销毁节点
+    // 共享纹理（抽帧 / 瓦片）由 MediaStore 统一释放，这里只销毁节点；
+    // 但引用计数必须先归零，否则被 LRU 退役的纹理永远等不到销毁
+    for (const sp of this.cells.values()) releaseTexture(sp.texture as Texture)
+    this.cells.clear()
+    this.cellKeys.clear()
+    this.pendingCells.clear()
+    // 波形块纹理单独持有，需显式释放
+    for (const c of this.waveChunks.values()) {
+      try {
+        c.sp.destroy({ texture: false })
+        c.tex.destroy(true)
+      } catch {
+        /* noop */
+      }
+    }
+    this.waveChunks.clear()
     this.container.destroy({ children: true })
   }
 }

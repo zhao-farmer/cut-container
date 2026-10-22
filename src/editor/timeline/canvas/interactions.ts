@@ -352,7 +352,8 @@ export function bindCanvasInteractions(ctx: TimelineCtx, deps: InteractionDeps):
           moved: false,
           ripple: false
         }
-        canvas.style.cursor = hit.part === 'vol' ? 'row-resize' : 'ew-resize'
+        // 音量线拖动全程保持 ns-resize（与 hover 一致）；拖裁柄才是 ew-resize
+        canvas.style.cursor = hit.part === 'vol' ? 'ns-resize' : 'ew-resize'
         canvas.setPointerCapture?.(e.pointerId)
         draw()
         return

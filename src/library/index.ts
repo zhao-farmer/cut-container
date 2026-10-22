@@ -59,6 +59,7 @@ export interface EditorUserConfig {
    * 支持 endpoints / 扁平 URL 字段：
    * { enabled, baseUrl, timeoutMs, endpoints: { catalog, upload, delete, config } }
    */
+  /** 后端交互模式：{ mode: 'local' | 'remote' | 'hybrid', baseUrl, timeoutMs } */
   backend?: Record<string, any>
 }
 

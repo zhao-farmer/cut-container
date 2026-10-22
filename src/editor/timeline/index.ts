@@ -86,6 +86,7 @@ export async function createTimelineTrack(
     autoDensity: true
   })
   app.ticker.stop()
+
   app.stage.x = -cfg.headWidth
   const canvas = app.canvas as HTMLCanvasElement
   canvas.style.display = 'block'
@@ -228,16 +229,20 @@ export async function createTimelineTrack(
       const next = clamp(Math.round(level), cfg.levelMin, cfg.levelMax)
       if (next === s.zoom) return
       const cw = host.clientWidth || 1280
-      // 锚点必须取播放区（canvas 元素）的视觉中心，绘制坐标 (headWidth+cw)/2。
-      // 旧实现用整幅 cw/2，偏左 headWidth/2（≈45px）：放大时指针下的时间点
-      // 持续向右漂移，连带横滚条拇指位置每级都"跳"一下
-      const viewCx = (cfg.headWidth + cw) / 2
-      const centerSec = (s.offX + viewCx - ctx.originX) / pxPerSecForLevel(s.zoom, cfg)
+      // 缩放锚点优先取播放头：缩放前后播放头的屏幕位置保持不动（剪映行为）。
+      // 播放头不在视口内时才退回播放区中心，避免缩放把视图甩到看不见播放头的位置。
+      // 旧实现恒定用视口中心做锚点：offX=0 的初始状态一放大，视图会自动滚到时间轴中段，
+      // 横滚条拇指随之中置 —— 看起来就是"放大后滚动条的初始位置不在 0"。
+      const scale0 = pxPerSecForLevel(s.zoom, cfg)
+      const phScreen = ctx.originX + s.playhead * scale0 - s.offX
+      const inView = phScreen >= cfg.headWidth && phScreen <= cw
+      const anchorScreen = inView ? phScreen : (cfg.headWidth + cw) / 2
+      const anchorSec = (s.offX + anchorScreen - ctx.originX) / scale0
       s.zoom = next
       const newScale = pxPerSecForLevel(s.zoom, cfg)
       const duration = totalDuration(s.data ?? [], cfg)
       const maxOff = Math.max(0, ctx.originX + duration * newScale + cfg.padX * 2 - cw)
-      s.offX = clamp(ctx.originX + centerSec * newScale - viewCx, 0, maxOff)
+      s.offX = clamp(ctx.originX + anchorSec * newScale - anchorScreen, 0, maxOff)
       if (!s.destroyed) draw()
     },
     getZoom() {

@@ -23,6 +23,10 @@ export interface TimelineExportHandleOptions {
   fps: number
   onProgress?: (phase: 'video' | 'audio' | 'mux', ratio: number) => void
   signal?: { cancelled: boolean }
+  /** 封面图（写入成片元信息 covr），不参与逐帧渲染 */
+  cover?: { data: Uint8Array; mimeType: string } | null
+  /** 作品标题（写入成片元信息） */
+  title?: string
 }
 
 export function ExportCaptureMixin<TBase extends AbstractCtor<PlayerBase>>(Base: TBase) {
@@ -100,7 +104,7 @@ export function ExportCaptureMixin<TBase extends AbstractCtor<PlayerBase>>(Base:
         // 3) 逐帧渲染：与暂停态静帧同一套多层合成，随后手动补一帧渲染上屏
         const prepareFrame = async (t: number) => {
           await this.renderTimelineStill(t)
-          app.renderer.render(app.stage)
+          app.render()
         }
 
         return await exportTimelineMp4({
@@ -114,7 +118,9 @@ export function ExportCaptureMixin<TBase extends AbstractCtor<PlayerBase>>(Base:
           getDecoder: url => this.resources.getDecoder(url),
           decodeCtx,
           onProgress: opts.onProgress,
-          signal: opts.signal
+          signal: opts.signal,
+          cover: opts.cover ?? null,
+          title: opts.title
         })
       } finally {
         // 顺序取帧游标 / 静态层缓存一律先释放（取消导出时也不留帧）

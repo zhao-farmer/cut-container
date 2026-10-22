@@ -212,6 +212,15 @@ export function createRenderer(ctx: TimelineCtx, deps: RendererDeps): RendererAp
     if (s.destroyed) return
     const cw = host.clientWidth || 1280
     const ch = host.clientHeight || 204
+    // 自愈：宿主尺寸与渲染目标不一致时（拖分隔条 / 布局切换后 RO 尚未回调），先同步画布尺寸。
+    // 否则绘制按新的 host 高度铺排、画布却还是旧尺寸 —— 横向滚动条会画到画面中间，
+    // 或者整条内容被裁在旧画布里。
+    {
+      const w = cw - cfg.headWidth
+      if (w > 0 && ch > 0 && (app.screen.width !== w || app.screen.height !== ch)) {
+        app.renderer.resize(w, ch)
+      }
+    }
     const stage = app.stage
     stage.sortableChildren = false
 
@@ -657,9 +666,13 @@ export function createRenderer(ctx: TimelineCtx, deps: RendererDeps): RendererAp
       const cover = new PIXI.Container()
       if (s.coverTexture) {
         const sp = new PIXI.Sprite(s.coverTexture)
-        sp.width = size
-        sp.height = size
-        sp.position.set(bx, by)
+        // 封面可能不是正方形（跟随画布比例）：按 cover 填充并居中，避免拉伸变形
+        const texW = s.coverTexture.width || 1
+        const texH = s.coverTexture.height || 1
+        const k = Math.max(size / texW, size / texH)
+        sp.width = texW * k
+        sp.height = texH * k
+        sp.position.set(bx + (size - sp.width) / 2, by + (size - sp.height) / 2)
         sp.alpha = s.coverPressed ? 0.7 : 1
         // 与未设态同一圆角形状裁切缩略图
         const spMask = new PIXI.Graphics()
@@ -830,7 +843,8 @@ export function createRenderer(ctx: TimelineCtx, deps: RendererDeps): RendererAp
       fxLayer.addChild(sb)
     }
 
-    app.renderer.render(stage)
+    // 走 Application.render（等价于 renderer.render(stage)，语义上就是"渲染一帧"）
+    app.render()
   }
 
   /* ---- 高频移动（dragover / pointermove / wheel）合帧重绘 ----

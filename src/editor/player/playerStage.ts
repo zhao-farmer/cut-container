@@ -90,6 +90,10 @@ export interface PlayerStageHandle {
     fps: number
     onProgress?: (phase: 'video' | 'audio' | 'mux', ratio: number) => void
     signal?: { cancelled: boolean }
+    /** 封面图（写入 MP4 元信息 covr），不占用首帧 */
+    cover?: { data: Uint8Array; mimeType: string } | null
+    /** 作品标题（写入 MP4 元信息） */
+    title?: string
   }) => Promise<ArrayBuffer>
   destroy: () => void
 }

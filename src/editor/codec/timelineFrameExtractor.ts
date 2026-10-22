@@ -47,6 +47,33 @@ interface GpuNavigator {
   }
 }
 
+/** 无 WebGPU 时复用的 <video> 元素（按 url 缓存，避免每次抽帧都重新加载） */
+interface VideoElEntry {
+  el: HTMLVideoElement
+  ready: Promise<void>
+}
+
+/** 等一帧真正被合成器呈现（requestVideoFrameCallback 不支持时退化为两帧 rAF） */
+const waitFramePresented = (video: HTMLVideoElement, timeoutMs = 300) =>
+  new Promise<void>(resolve => {
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      resolve()
+    }
+    // 后台标签页 / 无头环境里 rVFC 可能一直不回调：超时兜底，不能把抽帧队列挂死
+    const timer = setTimeout(finish, timeoutMs)
+    const v = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number
+    }
+    if (typeof v.requestVideoFrameCallback === 'function') {
+      v.requestVideoFrameCallback(() => finish())
+    } else {
+      requestAnimationFrame(() => requestAnimationFrame(finish))
+    }
+  })
 const waitEvent = (video: HTMLVideoElement, event: string, timeoutMs = 8000) =>
   new Promise<void>((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -184,8 +211,8 @@ export class FrameExtractor {
         this.sampleSink = null
       }
     }
-    const arr = await this.extractVideoElementFrames(url, [t], w, h)
-    return arr[0] ?? null
+    const single = await this.extractVideoElementFrame(url, t, w, h)
+    return single
   }
 
   /** 拿到帧的当下同步 cover 烘焙；调用方负责随后立刻释放帧源 */
@@ -346,47 +373,139 @@ export class FrameExtractor {
    * 路径 3：原生 <video> 逐个 seek，canvas 拷贝像素后即刻烘焙
    * （对应参考 extractPixiVideoFrames，不依赖 pixi Assets / GPU）。
    */
-  async extractVideoElementFrames(
+  /* ---------------- 无 WebGPU：HTMLVideoElement 精确 seek 取帧 ---------------- */
+
+  /** 按 url 复用的 <video> 元素（跨多次抽帧保留，避免重复加载元数据） */
+  private vEls = new Map<string, VideoElEntry>()
+  /** seek 串行链：同一元素同一时刻只能有一个 seek 在跑，否则 currentTime 会被覆盖 */
+  private seekChain: Promise<unknown> = Promise.resolve()
+
+  /** 串行执行（同一 extractor 的 seek 必须排队，否则会互相打断） */
+  private enqueueSeek<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.seekChain.then(fn, fn)
+    this.seekChain = run.catch(() => undefined)
+    return run
+  }
+
+  private videoElFor(url: string): Promise<HTMLVideoElement> {
+    let entry = this.vEls.get(url)
+    if (!entry) {
+      const el = document.createElement('video')
+      el.muted = true
+      el.playsInline = true
+      el.preload = 'auto'
+      el.crossOrigin = 'anonymous'
+      el.src = url
+      const ready = waitEvent(el, 'loadedmetadata').then(() => undefined)
+      entry = { el, ready }
+      this.vEls.set(url, entry)
+    }
+    return entry.ready.then(() => entry!.el)
+  }
+
+  /**
+   * 精确 seek 到目标帧：
+   * 1. 目标时间加半帧，避免正好落在帧边界上被解析成上一帧；
+   * 2. 等 seeked 之后再等一帧真正呈现（requestVideoFrameCallback），
+   *    否则 drawImage 抓到的可能还是上一帧 —— 这就是之前"重复帧/跳帧"的根因；
+   * 3. 拿到 mediaTime 后校验，偏差超过 1.5 帧就再试一次。
+   */
+  private async seekPrecise(video: HTMLVideoElement, time: number, fps: number): Promise<void> {
+    const frame = 1 / Math.max(1, fps)
+    const dur = Number.isFinite(video.duration) ? video.duration : time + 1
+    const target = Math.min(Math.max(0, time + frame * 0.5), Math.max(0, dur - frame * 0.01))
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (Math.abs(video.currentTime - target) < frame * 0.01 && attempt === 0) {
+        // 已经在目标帧上：仍然等一次呈现，保证抓到的是新帧
+        await waitFramePresented(video)
+        return
+      }
+      video.currentTime = target
+      await waitEvent(video, 'seeked')
+      const presented = await this.presentedTime(video)
+      await waitFramePresented(video)
+      if (presented === null || Math.abs(presented - target) <= frame * 1.5) return
+    }
+  }
+
+  /** 读取 seek 后实际呈现的媒体时间（不支持 rVFC 时返回 null） */
+  private presentedTime(video: HTMLVideoElement): Promise<number | null> {
+    const v = video as HTMLVideoElement & {
+      requestVideoFrameCallback?: (cb: (now: number, meta: { mediaTime: number }) => void) => number
+    }
+    if (typeof v.requestVideoFrameCallback !== 'function') return Promise.resolve(null)
+    return new Promise<number | null>(resolve => {
+      const timer = setTimeout(() => resolve(null), 800)
+      v.requestVideoFrameCallback!((_now, meta) => {
+        clearTimeout(timer)
+        resolve(meta.mediaTime)
+      })
+    })
+  }
+
+  /**
+   * 精确取单帧（无 WebGPU 环境用）：seek → 等帧真正呈现 → canvas 拷贝 → 烘焙成格纹理。
+   * 与 sample/getSample 路径同契约：失败返回 null，不抛异常。
+   */
+  async extractVideoElementFrame(
     url: string,
-    times: number[],
+    time: number,
     w: number,
-    h: number
-  ): Promise<(import('pixi.js').Texture | null)[]> {
-    const out: (import('pixi.js').Texture | null)[] = new Array(times.length).fill(null)
-    const video = document.createElement('video')
-    video.muted = true
-    video.playsInline = true
-    video.preload = 'auto'
-    video.crossOrigin = 'anonymous'
-    video.src = url
+    h: number,
+    fps = 30
+  ): Promise<import('pixi.js').Texture | null> {
     try {
-      await waitEvent(video, 'loadedmetadata')
-      for (let i = 0; i < times.length; i++) {
-        video.currentTime = times[i]
-        await waitEvent(video, 'seeked')
+      return await this.enqueueSeek(async () => {
+        const video = await this.videoElFor(url)
+        await this.seekPrecise(video, time, fps)
         const vw = video.videoWidth
         const vh = video.videoHeight
-        if (!vw || !vh) continue
-        // canvas 像素拷贝脱离 video，再烘焙成格纹理
+        if (!vw || !vh) return null
         const canvas = document.createElement('canvas')
         canvas.width = vw
         canvas.height = vh
         const ctx = canvas.getContext('2d')
-        if (!ctx) continue
+        if (!ctx) return null
         ctx.drawImage(video, 0, 0, vw, vh)
-        out[i] = this.bake(canvas, vw, vh, w, h)
-        await new Promise(r => setTimeout(r, 0))
-      }
+        return this.bake(canvas, vw, vh, w, h)
+      })
     } catch (err) {
-      console.warn('[FrameExtractor] video seek 抽帧中断', err)
-    } finally {
-      video.removeAttribute('src')
+      console.warn('[FrameExtractor] video 精确取帧失败', err)
+      return null
+    }
+  }
+
+  /**
+   * 按时间数组批量取帧（无 WebGPU 环境用）：返回数组与 times 一一对应，
+   * 内部串行 seek 同一个 <video>，保证每帧都是目标时刻的真实帧。
+   */
+  async extractVideoElementFrames(
+    url: string,
+    times: number[],
+    w: number,
+    h: number,
+    fps = 30
+  ): Promise<(import('pixi.js').Texture | null)[]> {
+    const out: (import('pixi.js').Texture | null)[] = new Array(times.length).fill(null)
+    // 时间升序：seek 天然单向，顺序请求能省掉大量来回解码
+    const order = times.map((t, i) => ({ t, i })).sort((a, b) => a.t - b.t)
+    for (const { t, i } of order) {
+      out[i] = await this.extractVideoElementFrame(url, t, w, h, fps)
+    }
+    return out
+  }
+
+  /** 释放无 WebGPU 路径缓存的 <video> 元素 */
+  destroy() {
+    for (const { el } of this.vEls.values()) {
+      el.removeAttribute('src')
       try {
-        video.load()
+        el.load()
       } catch {
         /* noop */
       }
     }
-    return out
+    this.vEls.clear()
+    this.sampleSink = null
   }
 }

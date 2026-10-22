@@ -179,6 +179,98 @@
 }
 .ed-tl-head-btn[data-act="sound"] .ed-tl-ic[data-tip]:hover::after { transform: translateY(0); }
 
+/* ---- 封面设计弹窗：方形取景框 + 拖动/缩放编辑（只用编辑能力，无模板库） ---- */
+.ed-cover-editor { width: 700px; }
+/* 取景区：700×450，无内边距，背景与弹窗同色，靠 1px 边框区分 */
+.ed-cover-stage {
+  display: flex; justify-content: center; align-items: center;
+  width: 100%; height: 450px; padding: 0;
+  background: var(--ed-panel); border: 1px solid var(--ed-border);
+  box-sizing: border-box;
+}
+.ed-cover-view {
+  position: relative; width: 360px; height: 360px; overflow: hidden;
+  /* 图片区域不做圆角 */
+  background: #000; border-radius: 0; touch-action: none;
+}
+.ed-cover-view.is-dragging { cursor: grabbing; }
+.ed-cover-canvas { display: block; pointer-events: none; }
+/* 取景框：白色描边 + 三分构图虚线 + 四角圆点 */
+/* 取景框：可移动、8 点缩放；框外区域用超大投影压暗（同参考的遮罩层） */
+.ed-cover-clip {
+  position: absolute; visibility: hidden; cursor: move; touch-action: none;
+  border: 1px solid rgba(255, 255, 255, .9);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, .45);
+}
+.ed-cover-clip-move { position: absolute; inset: 0; cursor: move; }
+.ed-cover-handle {
+  /* 命中区域放大到 14px，指针不必精确压在 10px 圆点上 */
+  position: absolute; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 4px rgba(0, 0, 0, .55);
+  box-sizing: border-box;
+}
+.h-nw { left: -7px; top: -7px; cursor: nw-resize; }
+.h-ne { right: -7px; top: -7px; cursor: ne-resize; }
+.h-sw { left: -7px; bottom: -7px; cursor: sw-resize; }
+.h-se { right: -7px; bottom: -7px; cursor: se-resize; }
+/* 取景框中间的十字虚线 */
+.ed-cover-clip::before,
+.ed-cover-clip::after {
+  content: ''; position: absolute; pointer-events: none;
+  border-color: rgba(255, 255, 255, .55); border-style: dashed; border-width: 0;
+}
+.ed-cover-clip::before { left: 50%; top: 0; bottom: 0; border-left-width: 1px; }
+.ed-cover-clip::after { top: 50%; left: 0; right: 0; border-top-width: 1px; }
+/* 拖动 / 缩放过程中所有子元素沿用同一个指针（由 JS 写在内联样式上） */
+.ed-cover-clip.is-dragging,
+.ed-cover-clip.is-dragging * { cursor: inherit !important; }.ed-cover-hint {
+  position: absolute; left: 50%; bottom: 10px; transform: translateX(-50%);
+  font-size: 11px; color: #c9c9d2; background: rgba(0, 0, 0, .5);
+  padding: 2px 8px; border-radius: 10px; pointer-events: none; white-space: nowrap;
+}
+.ed-cover-tools { display: flex; flex-direction: column; gap: 10px; padding: 12px 20px 20px; }
+/* 头部：标题在左，来源切换在右（无 × 关闭按钮） */
+.ed-cover-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ed-cover-modes { display: flex; gap: 6px; margin-left: auto; }
+.ed-cover-modes button {
+  padding: 5px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--ed-border); background: transparent; color: var(--ed-text);
+}
+.ed-cover-modes button.is-on {
+  border-color: var(--ed-accent); color: var(--ed-accent);
+  background: rgba(24, 185, 212, .12);
+}
+/* 编辑操作：撤销 / 恢复 / 裁剪 */
+.ed-cover-ops { display: flex; align-items: center; gap: 6px; }
+.ed-cover-ops button {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 24px; padding: 0; border-radius: 6px;
+  /* 无边框 + 始终普通箭头指针 */
+  border: 0; background: transparent; color: var(--ed-text); cursor: pointer;
+}
+.ed-cover-ops button:hover:not(:disabled) { color: #fff; }
+.ed-cover-ops button:disabled { opacity: .35; cursor: pointer; }
+/* 文字按钮（完成裁剪 / 上传图片）：样式对齐素材库的「导入」按钮（.ed-mini-btn） */
+.ed-cover-ops button.ed-cover-textbtn {
+  width: auto; height: auto; padding: 5px 12px; border-radius: 5px;
+  border: 1px solid #48484e; background: #34343a; color: var(--ed-text);
+  font-size: 12px; cursor: pointer;
+}
+.ed-cover-ops button.ed-cover-textbtn:hover:not(:disabled) { background: #3d3d44; }
+.ed-cover-ops button.ed-cover-textbtn:disabled { opacity: .5; cursor: default; }
+/* 文字按钮与图标按钮之间的竖线分隔 */
+.ed-cover-sep { width: 1px; height: 16px; background: var(--ed-border); margin: 0 6px; flex: none; }
+/* 主轨胶片条：canvas 绘制，黄线标出当前帧 */
+.ed-cover-strip {
+  display: block; width: 100%; height: 56px; border-radius: 6px;
+  background: #101012; cursor: pointer; touch-action: none;
+}
+.ed-cover-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.ed-cover-cancel, .ed-cover-ok {
+  padding: 7px 18px; border-radius: 6px; font-size: 12px; cursor: pointer;
+  border: 1px solid var(--ed-border); background: var(--ed-panel-hi); color: var(--ed-text);
+}
+.ed-cover-ok { background: var(--ed-accent); border-color: var(--ed-accent); color: #04262c; font-weight: 600; }
 /* ---- 主轨「封面」设置弹窗：仅两个来源按钮（上传封面 / 首帧封面） ---- */
 .ed-cover-panel { width: 360px; }
 .ed-cover-body { padding: 16px; display: flex; flex-direction: column; gap: 10px; }

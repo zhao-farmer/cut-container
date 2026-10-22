@@ -4,21 +4,6 @@
 
 一个剪映风格的视频编辑器，封装为与框架无关的 Web Component。可以直接放入原生 HTML，也可以在 Vue、React、Svelte、Solid 中使用；编辑器本身不依赖任何前端框架运行时。
 
-## 使用的技术
-
-| 层级 | 技术 |
-|---|---|
-| 语言 | TypeScript |
-| UI | Web Components + Shadow DOM |
-| 构建 | Vite 5 |
-| 播放与合成 | pixi.js 8.12 |
-| 解码 / MP4 导出 | mediabunny 1.50.8 + WebCodecs |
-| 音频 | Web Audio API |
-| 持久化 | 版本化 `localStorage`（工程 / 素材），本地上传文件存 IndexedDB |
-| 可选后端 | 零依赖 Node 服务，提供素材目录、上传与 Range 静态文件 |
-
-编辑器在浏览器内完成渲染和合成；`pixi.js` 与 `mediabunny` 保持为外部依赖，可通过 npm、CDN 或 import map 加载。
-
 ## 安装
 
 ```bash
@@ -42,8 +27,8 @@ lib/    ES module 构建
 <div id="app" style="width: 100%; height: 100vh"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/pixi.js@8.12.0/dist/pixi.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cut-container@0.0.2/dist/vendor/mediabunny.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/cut-container@0.0.2/dist/cut-container.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cut-container/dist/vendor/mediabunny.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cut-container/dist/cut-container.min.js"></script>
 <script>
   const app = CutContainer.createApp({ host: '#app' })
   app.mount()
@@ -66,7 +51,7 @@ lib/    ES module 构建
 }
 </script>
 <script type="module">
-  import { createApp } from 'https://cdn.jsdelivr.net/npm/cut-container@0.0.2/lib/cut-container.min.mjs'
+  import { createApp } from 'https://cdn.jsdelivr.net/npm/cut-container/lib/cut-container.min.mjs'
 
   const app = createApp({ host: '#app' })
   await app.mount()
@@ -241,7 +226,7 @@ await app.mount()
   "lang": "zh",
   "tabs": ["material", "audio", "text", "caption"],
   "backend": {
-    "enabled": true,
+    "mode": "remote",
     "baseUrl": "https://api.example.com",
     "timeoutMs": 8000,
     "endpoints": {
@@ -256,9 +241,24 @@ await app.mount()
 
 ### 后端配置
 
+`backend.mode` 决定编辑器怎么和后端打交道：
+
+| 模式 | 素材目录 / 配置 | 导入时的上传 | 删除 / 重命名 |
+|---|---|---|---|
+| `local`（默认） | 完全不请求 | 只存本地（IndexedDB） | 只改本地 |
+| `remote` | 从后端拉 | 上传到后端 | 调用后端接口 |
+| `hybrid` | 只做 GET 拉取 | 只存本地 | 只改本地 |
+
+后端只负责托管素材库时用 `hybrid`：目录从后端读，导入 / 删除 / 重命名都不会写回后端，全部留在浏览器里。
+
+```json
+{ "backend": { "mode": "hybrid", "baseUrl": "https://api.example.com" } }
+```
+
 | 字段 | 说明 |
 |---|---|
-| `enabled` | 是否启用远程素材目录 / 上传 / 草稿配置 |
+| `mode` | `local` \| `remote` \| `hybrid`（见上表） |
+| `enabled` | 旧开关；不写 `mode` 时 `enabled: true` 等价于 `remote` |
 | `baseUrl` | 相对接口路径的前缀 |
 | `timeoutMs` | 请求超时；`0` 表示不超时 |
 | `endpoints.catalog` | 素材目录 JSON |
@@ -273,7 +273,7 @@ await app.mount()
 ```html
 <script>
   window.CUT_CONTAINER_CONFIG = {
-    enabled: true,
+    mode: 'hybrid',
     baseUrl: 'http://localhost:3001',
     timeoutMs: 8000
   }
@@ -357,6 +357,35 @@ await mountEditor(document.getElementById('app')!, { lang: 'zh' })
 - 全屏快捷键仅在播放器全屏时生效。
 - 调整文字时会自动暂停播放，避免播放头走出文字片段导致文字消失。
 - 工程和素材数据会自动保存到 `localStorage`；本地导入的文件保存在 IndexedDB。
+- 设置过封面后，导出的 MP4 会把封面写进文件元信息（moov/udta/meta/ilst/covr），同时写入草稿标题——播放器和文件管理器显示的是这张封面图，而不是首帧。
+
+## 致谢
+
+编辑器的画面渲染与视频处理分别依赖两个优秀的开源项目，感谢它们的作者与贡献者。
+
+### pixi.js
+
+[pixi.js](https://github.com/pixijs/pixijs) v8 负责时间轴与播放器的全部画面绘制：
+
+| 用在哪里 | 具体做什么 |
+|---|---|
+| `src/editor/timeline/canvas/` | 时间轴渲染：轨道、片段、缩略格、波形、播放头、滚动条 |
+| `src/editor/timeline/canvas/render.ts` | 图层合成、遮罩、封面按钮、拖拽虚影 |
+| `src/editor/timeline/canvas/waveformRenderer.ts` | 用 `CanvasSource` 烘焙波形纹理 |
+| `src/editor/player/` | 播放器舞台：视频 / 图片精灵、变换、滤镜、覆盖层 |
+
+### mediabunny
+
+[mediabunny](https://github.com/Vanilagy/mediabunny) v1.50 负责解码、抽帧与 MP4 封装：
+
+| 用在哪里 | 具体做什么 |
+|---|---|
+| `src/editor/codec/timelineExporter.ts` | MP4 封装、元信息写入（封面 `covr`、标题） |
+| `src/editor/codec/timelineFrameExtractor.ts` | 缩略图与封面编辑器的精确抽帧 |
+| `src/editor/codec/timelineMedia.ts` | 视频 / GIF 帧缓存、音频解码 |
+| `src/editor/player/` | 基于 WebCodecs 的播放解码 |
+
+两个项目都是 MIT 协议；如果你用这个编辑器做了东西，欢迎去给它们的仓库点个 Star。
 
 ## License
 

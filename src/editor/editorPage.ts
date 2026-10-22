@@ -58,11 +58,13 @@ import {
   type TimelineTrackHandle
 } from './timeline'
 import { createTimelineToolbar, timelineToolbarHtml } from './timeline/ui/toolbar'
-import { FRAME_ICON, UPLOAD_ICON } from './utils/icons'
-import { fetchCatalog, fetchRemoteConfig, loadAppConfig, deleteCatalogItem } from './services/backend'
+import { FRAME_ICON, UPLOAD_ICON, tlIcon } from './utils/icons'
+import { ALL_FORMATS, Input, UrlSource, VideoSampleSink } from 'mediabunny'
+import { fetchCatalog, fetchRemoteConfig, loadAppConfig, deleteCatalogItem, renameCatalogItem } from './services/backend'
 import { mergeCatalogIntoMaterials } from './services/catalog'
 import { addRemoteFonts } from './utils/customFonts'
 import { restoreLocalMedia, clearLocalMedia } from './utils/localMediaStore'
+import { coverImageToMetaJpeg } from './utils/coverMeta'
 import { openClipMenu, setClipClipboard, getClipClipboard } from './timeline/manage/clipMenu'
 import { bindTimelineShortcuts } from './timeline/manage/keyboard'
 
@@ -189,6 +191,121 @@ function loadImageEl(url: string): Promise<HTMLImageElement> {
     img.onload = () => resolve(img)
     img.onerror = () => reject(new Error('图片加载失败'))
     img.src = url
+  })
+}
+
+/* ---------- 主轨抽帧：mediabunny 精确取帧（封面编辑器的胶片条用） ---------- */
+const coverInputs = new Map<string, Promise<Input>>()
+function coverInput(url: string): Promise<Input> {
+  let p = coverInputs.get(url)
+  if (!p) {
+    p = (async () => {
+      const input = new Input({ source: new UrlSource(url), formats: ALL_FORMATS })
+      return input
+    })()
+    coverInputs.set(url, p)
+  }
+  return p
+}
+
+/** 用 mediabunny 取指定时刻的一帧，返回整帧 canvas（失败返回 null） */
+async function mediabunnyFrameCanvas(url: string, atSec: number): Promise<HTMLCanvasElement | null> {
+  try {
+    const input = await coverInput(url)
+    const track = await input.getPrimaryVideoTrack()
+    if (!track) return null
+    const sink = new VideoSampleSink(track)
+    // 片段时长可能略大于素材时长（拉长 / 取整误差）：钳到素材末帧，避免最后一格取不到图
+    let at = Math.max(0, atSec)
+    try {
+      const dur = await track.computeDuration()
+      if (Number.isFinite(dur) && dur > 0) at = Math.min(at, Math.max(0, dur - 0.02))
+    } catch {
+      /* noop */
+    }
+    let sample = await sink.getSample(at)
+    if (!sample && at > 0.12) sample = await sink.getSample(at - 0.12)
+    if (!sample) return null
+    const frame = sample.toVideoFrame()
+    const w = frame.displayWidth || frame.codedWidth
+    const h = frame.displayHeight || frame.codedHeight
+    const c = document.createElement('canvas')
+    c.width = w
+    c.height = h
+    const ctx = c.getContext('2d')
+    if (!ctx) return null
+    ctx.drawImage(frame, 0, 0, w, h)
+    try {
+      frame.close()
+    } catch {
+      /* noop */
+    }
+    try {
+      sample.close()
+    } catch {
+      /* noop */
+    }
+    return c
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 视频 seek 到指定时刻，返回**整帧**图像（不裁切）—— 供封面编辑器做取景 / 缩放。
+ * 首帧兜底：定位失败时停在 0s。
+ */
+function captureVideoFrameImage(url: string, atSec: number): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const v = document.createElement('video')
+    v.muted = true
+    v.playsInline = true
+    v.preload = 'auto'
+    v.crossOrigin = 'anonymous'
+    let done = false
+    const timer = window.setTimeout(fail(new Error('视频取帧超时')), 12000)
+    function cleanup() {
+      window.clearTimeout(timer)
+      v.removeAttribute('src')
+      try {
+        v.load()
+      } catch {
+        /* noop */
+      }
+    }
+    function fail(err: Error) {
+      return () => {
+        if (done) return
+        done = true
+        cleanup()
+        reject(err)
+      }
+    }
+    v.addEventListener('loadedmetadata', () => {
+      const dur = Number.isFinite(v.duration) ? v.duration : 0
+      v.currentTime = Math.min(Math.max(0, atSec), Math.max(0, dur - 0.05))
+    })
+    v.addEventListener('seeked', () => {
+      if (done) return
+      if (!v.videoWidth || !v.videoHeight) {
+        fail(new Error('视频无可用画面'))()
+        return
+      }
+      done = true
+      try {
+        const c = document.createElement('canvas')
+        c.width = v.videoWidth
+        c.height = v.videoHeight
+        c.getContext('2d')!.drawImage(v, 0, 0, c.width, c.height)
+        loadImageEl(c.toDataURL('image/jpeg', 0.92)).then(resolve, reject)
+      } catch (e) {
+        reject(e instanceof Error ? e : new Error('截帧失败'))
+      } finally {
+        cleanup()
+      }
+    })
+    v.addEventListener('error', fail(new Error('视频加载失败')))
+    v.src = url
   })
 }
 
@@ -921,6 +1038,8 @@ export function createEditorPage(
 
   /** 素材库重命名：时间轴里引用该素材的片段同步改名（预览标题同步） */
   function handleMaterialRenamed(id: string, name: string) {
+    // 纯后端模式同步改后端条目；hybrid / local 模式下该函数内部直接返回，不产生请求
+    void renameCatalogItem(id, name)
     let trackChanged = false
     for (const tr of trackObjects) {
       for (const it of tr.items) {
@@ -1511,53 +1630,604 @@ export function createEditorPage(
 
   /** 封面按钮弹窗：仅「上传封面 / 首帧封面」两个来源按钮；
    *  已有封面的移除走时间轴缩略图右上角 × 角标，弹窗内不放预览与移除入口 */
+  /**
+   * 封面设计弹窗（对齐剪映右侧编辑区，只用编辑能力，不带模板库）：
+   * - 两种来源：「主轨取帧」（沿主轨拖动选帧）/「上传封面」；
+   * - 取到画面后在方形取景框内拖动 / 滚轮缩放，所见即所得；
+   * - 「设为封面」把取景框内容导出成方形 JPEG 写回封面。
+   */
+  /**
+   * 封面设计弹窗（对齐剪映）：
+   * - 左上角切换来源：主轨抽帧 / 上传封面；
+   * - 主轨抽帧：按固定格宽把主轨铺成一条 canvas 胶片，图片直接绘制、视频用
+   *   mediabunny 取对应帧；黄色竖线标出当前选中的那一帧；
+   * - 编辑区为方形取景框，可拖动 / 滚轮缩放，撤销 / 恢复 / 裁剪三个按钮；
+   * - 「设为封面」把取景框内容导出成方形 JPEG 写回封面。
+   */
+  /**
+   * 封面设计弹窗（对齐剪映，图片处理参考 cropped-avatar/头像裁剪2.html）：
+   * - 左上角只留标题，右上角切换来源：主轨抽帧 / 上传封面；
+   * - 主轨抽帧：canvas 胶片条，黄线按帧号定位（图片直接取、视频走 mediabunny）；
+   * - 中间 canvas 显示整张图（contain 居中），上面盖一个可移动 / 8 点缩放的取景框；
+   * - 「裁剪」= 按取景框截图（与参考的 cutImage 一致），结果作为封面；
+   * - 撤销 / 恢复 / 裁剪（截图）三个图标按钮；
+   * - 「设为封面」把截图结果写回封面。
+   */
   function openCoverModal() {
+    const mainTrack = trackObjects.find(t => t.layer === 0) ?? null
+    const items = (mainTrack?.items ?? [])
+      .filter(it => it.visible !== false)
+      .slice()
+      .sort((a, b) => a.start - b.start)
+    const trackDur = Math.max(
+      0.1,
+      items.reduce((m, it) => Math.max(m, it.start + it.duration), 0)
+    )
+
     const mask = document.createElement('div')
     mask.className = 'ed-modal-mask'
     mask.innerHTML = `
-      <div class="ed-modal ed-cover-panel" role="dialog" aria-modal="true" aria-label="设置封面">
-        <div class="ed-modal-head">
-          <span class="ed-modal-title">设置封面</span>
-          <button type="button" class="ed-modal-x" data-act="close" aria-label="关闭">×</button>
+      <div class="ed-modal ed-cover-editor" role="dialog" aria-modal="true" aria-label="封面设计">
+        <div class="ed-modal-head ed-cover-head">
+          <span class="ed-modal-title">封面设计</span>
+          <div class="ed-cover-modes">
+            <button type="button" class="is-on" data-mode="frame">主轨抽帧</button>
+            <button type="button" data-mode="upload">上传封面</button>
+          </div>
         </div>
-        <div class="ed-cover-body">
-          <button type="button" class="ed-cover-opt" data-act="upload">
-            <span class="ed-cover-opt-icon">${UPLOAD_ICON}</span>
-            <span><span class="ed-cover-opt-main">上传封面</span><span class="ed-cover-opt-sub">从本地选择一张图片</span></span>
-          </button>
-          <button type="button" class="ed-cover-opt" data-act="frame">
-            <span class="ed-cover-opt-icon">${FRAME_ICON}</span>
-            <span><span class="ed-cover-opt-main">首帧封面</span><span class="ed-cover-opt-sub">截取主轨第一个素材的首帧画面</span></span>
-          </button>
+        <div class="ed-cover-stage" data-role="stage">
+          <div class="ed-cover-view" data-role="view">
+            <canvas class="ed-cover-canvas" data-role="preview"></canvas>
+            <div class="ed-cover-clip" data-role="clip">
+              <div class="ed-cover-clip-move" data-role="move"></div>
+              <i class="ed-cover-handle h-nw" data-h="nw"></i>
+
+              <i class="ed-cover-handle h-ne" data-h="ne"></i>
+
+
+              <i class="ed-cover-handle h-sw" data-h="sw"></i>
+
+              <i class="ed-cover-handle h-se" data-h="se"></i>
+            </div>
+
+          </div>
+        </div>
+        <div class="ed-cover-tools">
+          <div class="ed-cover-ops">
+            <button type="button" class="ed-cover-op" data-act="undo" title="撤销" aria-label="撤销">${tlIcon('undo', 15)}</button>
+            <button type="button" class="ed-cover-op" data-act="redo" title="恢复" aria-label="恢复">${tlIcon('redo', 15)}</button>
+            <button type="button" class="ed-cover-op" data-act="crop" title="裁剪" aria-label="裁剪">${tlIcon('crop', 15)}</button>
+            <span class="ed-cover-sep" data-role="sep" style="display:none" aria-hidden="true"></span>
+            <button type="button" class="ed-cover-textbtn" data-act="finish" data-role="finish" style="display:none">完成裁剪</button>
+            <button type="button" class="ed-cover-textbtn" data-act="upload" data-role="upload" style="display:none">上传图片</button>
+          </div>
+          <canvas class="ed-cover-strip" data-role="strip"></canvas>
+          <div class="ed-cover-actions">
+            <button type="button" class="ed-cover-cancel" data-act="cancel">取消</button>
+            <button type="button" class="ed-cover-ok" data-act="apply">设为封面</button>
+          </div>
         </div>
       </div>`
+    const view = mask.querySelector<HTMLElement>('[data-role="view"]')!
+    const previewCv = mask.querySelector<HTMLCanvasElement>('[data-role="preview"]')!
+    const previewCtx = previewCv.getContext('2d')
+    const clipEl = mask.querySelector<HTMLElement>('[data-role="clip"]')!
+    const strip = mask.querySelector<HTMLCanvasElement>('[data-role="strip"]')!
+    const hintEl = mask.querySelector<HTMLElement>('[data-role="hint"]')
+    const uploadBtn = mask.querySelector<HTMLButtonElement>('[data-role="upload"]')!
+    const finishBtn = mask.querySelector<HTMLButtonElement>('[data-role="finish"]')!
+    const sepEl = mask.querySelector<HTMLElement>('[data-role="sep"]')!
+    const undoBtn = mask.querySelector<HTMLButtonElement>('[data-act="undo"]')!
+    const redoBtn = mask.querySelector<HTMLButtonElement>('[data-act="redo"]')!
     const fileInput = document.createElement('input')
     fileInput.type = 'file'
     fileInput.accept = 'image/*'
     fileInput.style.display = 'none'
     mask.appendChild(fileInput)
 
-    // 主轨（layer 0）第一个可见子项；不存在则首帧选项不可用
-    const mainTrack = trackObjects.find(t => t.layer === 0) ?? null
-    const firstItem =
-      mainTrack?.items
-        .filter(it => it.visible !== false)
-        .slice()
-        .sort((a, b) => a.start - b.start)[0] ?? null
-    const frameBtn = mask.querySelector<HTMLButtonElement>('[data-act="frame"]')!
-    if (!firstItem) {
-      frameBtn.disabled = true
-      frameBtn.querySelector('.ed-cover-opt-sub')!.textContent = '主轨暂无素材'
+    /* ---------- 基础尺寸：取景框跟随画布比例 ---------- */
+    const aspect =
+      detailData.canvasW > 0 && detailData.canvasH > 0
+        ? detailData.canvasW / detailData.canvasH
+        : 16 / 9
+    const OUT_W = Math.min(COVER_MAX_EDGE, aspect >= 1 ? 720 : Math.round(720 * aspect))
+    const OUT_H = Math.min(COVER_MAX_EDGE, aspect >= 1 ? Math.round(720 / aspect) : 720)
+    let VW = 640
+    let VH = Math.max(90, Math.round(VW / aspect))
+
+    /* 图片在 canvas 里的显示矩形（contain 居中，等同参考 loadCanvas） */
+    let src: HTMLImageElement | null = null
+    /** 当前显示的裁剪结果（canvas，同步绘制，撤销/恢复直接用它） */
+    let shotCanvas: HTMLCanvasElement | null = null
+    let imgRect = { x: 0, y: 0, w: 0, h: 0 }
+
+    /** 当前用于显示 / 裁剪的底图尺寸 */
+    function srcSize(): { w: number; h: number } {
+      const s = shotCanvas ?? src
+      if (!s) return { w: 0, h: 0 }
+      if (s instanceof HTMLCanvasElement) return { w: s.width, h: s.height }
+      return { w: (s as HTMLImageElement).naturalWidth, h: (s as HTMLImageElement).naturalHeight }
     }
 
-    function close() {
-      mask.remove()
-      document.removeEventListener('keydown', onKey)
+    /* 取景框（画布 CSS 像素坐标），比例锁定为画布比例 */
+    let clip = { x: 0, y: 0, w: 0, h: 0 }
+    let croppedUrl: string | null = null
+    /** 是否处于裁剪状态：只有点「裁剪」后才显示取景框 */
+    let cropping = false
+    /** 当前来源模式：主轨抽帧 / 上传封面 */
+    let mode: 'frame' | 'upload' = 'frame'
+
+    /** 已裁剪出的封面图（dataURL），撤销 / 恢复只在这 5 张之间切换 */
+    const MAX_SHOTS = 5
+    const shots: HTMLCanvasElement[] = []
+    let shotIdx = -1
+
+    function pushShot(cv: HTMLCanvasElement) {
+      shots.splice(shotIdx + 1)
+      shots.push(cv)
+      // 只保留最近 5 张
+      while (shots.length > MAX_SHOTS) shots.shift()
+      shotIdx = shots.length - 1
+      syncHistoryBtns()
     }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === 'Escape') close()
+    function syncHistoryBtns() {
+      undoBtn.disabled = shotIdx <= 0
+      redoBtn.disabled = shotIdx >= shots.length - 1
     }
-    function applyCover(dataUrl: string) {
+    /** 把某一张截图显示到中间的大 canvas 上（同步，立即生效） */
+    function showShot(i: number) {
+      if (i < 0 || i >= shots.length) return
+      shotIdx = i
+      shotCanvas = shots[i]
+      croppedUrl = shotCanvas.toDataURL('image/jpeg', 0.92)
+      clip = { x: 0, y: 0, w: 0, h: 0 }
+      cropping = false
+      layoutImage()
+      paintClip()
+      syncHistoryBtns()
+    }
+
+    /** 按 stage 可用尺寸算出 canvas 大小（无 padding，只扣 1px 边框） */
+    function sizeView() {
+      const stageEl = mask.querySelector<HTMLElement>('[data-role="stage"]')
+      if (!stageEl) return
+      const r = stageEl.getBoundingClientRect()
+      const boxW = Math.max(160, r.width - 2)
+      const boxH = Math.max(120, r.height - 2)
+      let w = boxW
+      let h = Math.round(w / aspect)
+      if (h > boxH) {
+        h = boxH
+        w = Math.round(h * aspect)
+      }
+      VW = w
+      VH = h
+      view.style.width = `${VW}px`
+      view.style.height = `${VH}px`
+      layoutImage()
+    }
+
+    /** 图片 contain 适配到 canvas（参考 loadCanvas 的 scaleWH 分支） */
+    function layoutImage() {
+      if (!src) {
+        imgRect = { x: 0, y: 0, w: 0, h: 0 }
+        renderPreview()
+        return
+      }
+      const sz = srcSize()
+      if (!sz.w || !sz.h) {
+        renderPreview()
+        return
+      }
+      const ratio = sz.w / sz.h
+      let w = VW
+      let h = Math.round(VW / ratio)
+      let x = 0
+      let y = Math.round((VH - h) / 2)
+      if (h > VH) {
+        h = VH
+        w = Math.round(VH * ratio)
+        x = Math.round((VW - w) / 2)
+        y = 0
+      }
+      imgRect = { x, y, w, h }
+      renderPreview()
+      if (!clip.w) resetClip()
+      else {
+        clip = clampClip(clip)
+        paintClip()
+      }
+    }
+
+    type ClipRect = { x: number; y: number; w: number; h: number }
+
+    /** 默认取景框：图片区域内最大的画布比例矩形，居中 */
+    function defaultClip(): ClipRect {
+      // 内缩到 85%，保证四角手柄落在可视区内、可拖动
+      let w = Math.round(imgRect.w * 0.85)
+      let h = Math.round(w / aspect)
+      if (h > imgRect.h * 0.85) {
+        h = Math.round(imgRect.h * 0.85)
+        w = Math.round(h * aspect)
+      }
+      return {
+        x: Math.round(imgRect.x + (imgRect.w - w) / 2),
+        y: Math.round(imgRect.y + (imgRect.h - h) / 2),
+        w,
+        h
+      }
+    }
+
+    function resetClip() {
+      clip = defaultClip()
+      paintClip()
+    }
+
+    /** 取景框限制在图片范围内 */
+    function clampClip(c: ClipRect): ClipRect {
+      const w = Math.min(c.w, imgRect.w)
+      const h = Math.min(c.h, imgRect.h)
+      const x = Math.min(imgRect.x + imgRect.w - w, Math.max(imgRect.x, c.x))
+      const y = Math.min(imgRect.y + imgRect.h - h, Math.max(imgRect.y, c.y))
+      return { x, y, w, h }
+    }
+
+    function paintClip() {
+      clipEl.style.left = `${clip.x}px`
+      clipEl.style.top = `${clip.y}px`
+      clipEl.style.width = `${clip.w}px`
+      clipEl.style.height = `${clip.h}px`
+      // 取景框只在点「裁剪」后出现
+      clipEl.style.visibility = src && cropping ? 'visible' : 'hidden'
+      syncTools()
+    }
+
+    /** 完成裁剪跟随取景框出现；上传图片跟随上传模式；两者都不在时竖线也隐藏 */
+    function syncTools() {
+      const uploadVisible = mode === 'upload'
+      const finishVisible = cropping && !!src
+      uploadBtn.style.display = uploadVisible ? '' : 'none'
+      finishBtn.style.display = finishVisible ? '' : 'none'
+      finishBtn.disabled = !finishVisible
+      sepEl.style.display = uploadVisible || finishVisible ? '' : 'none'
+    }
+
+    function renderPreview() {
+      if (!previewCtx) return
+      const dpr = Math.min(2, window.devicePixelRatio || 1)
+      const pw = Math.max(1, Math.round(VW * dpr))
+      const ph = Math.max(1, Math.round(VH * dpr))
+      if (previewCv.width !== pw || previewCv.height !== ph) {
+        previewCv.width = pw
+        previewCv.height = ph
+      }
+      previewCv.style.width = `${VW}px`
+      previewCv.style.height = `${VH}px`
+      previewCtx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      previewCtx.fillStyle = '#000'
+      previewCtx.fillRect(0, 0, VW, VH)
+      const s = shotCanvas ?? src
+      if (!s) return
+      previewCtx.drawImage(s, imgRect.x, imgRect.y, imgRect.w, imgRect.h)
+    }
+
+    function setSource(img: HTMLImageElement) {
+      src = img
+      shotCanvas = null
+      croppedUrl = null
+      shots.length = 0
+      shotIdx = -1
+      syncHistoryBtns()
+      clip = { x: 0, y: 0, w: 0, h: 0 }
+      layoutImage()
+      if (hintEl) hintEl.textContent = '拖动取景框选择封面区域 · 点「裁剪」截图'
+    }
+
+    /** 按取景框截图（参考 cropImage：把画布上的选中区域画到新 canvas） */
+    function cropCanvas(): HTMLCanvasElement | null {
+      const base = shotCanvas ?? src
+      const sz = srcSize()
+      if (!base || !clip.w || !sz.w) return null
+      const kx = sz.w / imgRect.w
+      const ky = sz.h / imgRect.h
+      const sx = (clip.x - imgRect.x) * kx
+      const sy = (clip.y - imgRect.y) * ky
+      const sw = clip.w * kx
+      const sh = clip.h * ky
+      const c = document.createElement('canvas')
+      c.width = OUT_W
+      c.height = OUT_H
+      const ctx = c.getContext('2d')
+      if (!ctx) return null
+      ctx.fillStyle = '#000'
+      ctx.fillRect(0, 0, OUT_W, OUT_H)
+      ctx.drawImage(base, sx, sy, sw, sh, 0, 0, OUT_W, OUT_H)
+      return c
+    }
+
+    function cropDataUrl(): string | null {
+      const c = cropCanvas()
+      return c ? c.toDataURL('image/jpeg', 0.92) : null
+    }
+
+    /* ---------- 拖动 / 8 点缩放（参考 startDrag 的 kind 分支） ---------- */
+    let drag: {
+      h: string
+      startX: number
+      startY: number
+      rect: ClipRect
+    } | null = null
+
+    function beginDrag(kind: string, e: PointerEvent) {
+      if (!src) return
+      drag = { h: kind, startX: e.clientX, startY: e.clientY, rect: { ...clip } }
+      // 拖动 / 缩放全程保持该控制点自己的指针（鼠标移出角点也不变）
+      const cur =
+        kind === 'move'
+          ? 'move'
+          : kind === 'nw'
+            ? 'nw-resize'
+            : kind === 'ne'
+              ? 'ne-resize'
+              : kind === 'sw'
+                ? 'sw-resize'
+                : 'se-resize'
+      view.style.cursor = cur
+      clipEl.style.cursor = cur
+      clipEl.classList.add('is-dragging')
+      view.setPointerCapture?.(e.pointerId)
+      e.preventDefault()
+      e.stopPropagation()
+    }
+
+    for (const handle of Array.from(clipEl.querySelectorAll<HTMLElement>('.ed-cover-handle'))) {
+      handle.addEventListener('pointerdown', (e: PointerEvent) =>
+        beginDrag(handle.dataset.h || 'move', e)
+      )
+    }
+    // 框内拖动 = 整体平移（四角仍用于等比缩放）
+    mask
+      .querySelector<HTMLElement>('[data-role="move"]')!
+      .addEventListener('pointerdown', (e: PointerEvent) => beginDrag('move', e))
+
+    view.addEventListener('pointermove', e => {
+      if (!drag) return
+      const dx = e.clientX - drag.startX
+      const dy = e.clientY - drag.startY
+      const r = drag.rect
+      if (drag.h === 'move') {
+        // 整体平移：尺寸不变，限制在图片范围内
+        clip = clampClip({ x: Math.round(r.x + dx), y: Math.round(r.y + dy), w: r.w, h: r.h })
+        paintClip()
+        croppedUrl = null
+        return
+      }
+      // 对角固定：nw 固定右下、se 固定左上、ne 固定左下、sw 固定右上
+      const anchorX = r.x + (drag.h.includes('w') ? r.w : 0)
+      const anchorY = r.y + (drag.h.includes('n') ? r.h : 0)
+      const minW = Math.max(24, Math.round(VW * 0.06))
+      // 等比缩放：取水平 / 垂直两个方向里变化更大的那个来决定边长
+      const dw = drag.h.includes('e') ? dx : -dx
+      const dh = drag.h.includes('s') ? dy : -dy
+      let w = r.w + dw
+      if (Math.abs(dh) > Math.abs(dw) / Math.max(0.0001, aspect) / 2) {
+        w = (r.h + dh) * aspect
+      }
+      // 限制在图片范围内（用对角锚点算最大值）
+      const maxW = drag.h.includes('e')
+        ? Math.max(minW, imgRect.x + imgRect.w - anchorX)
+        : Math.max(minW, anchorX - imgRect.x)
+      const maxH = drag.h.includes('s')
+        ? Math.max(minW / aspect, imgRect.y + imgRect.h - anchorY)
+        : Math.max(minW / aspect, anchorY - imgRect.y)
+      w = Math.min(Math.max(minW, w), Math.min(maxW, maxH * aspect))
+      const h = w / aspect
+      const x = drag.h.includes('w') ? anchorX - w : anchorX
+      const y = drag.h.includes('n') ? anchorY - h : anchorY
+      clip = clampClip({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) })
+      paintClip()
+      croppedUrl = null
+      if (hintEl) hintEl.textContent = '拖动取景框选择封面区域 · 点「裁剪」截图'
+    })
+    const endDrag = () => {
+      if (!drag) return
+      drag = null
+      clipEl.classList.remove('is-dragging')
+      view.style.cursor = ''
+      clipEl.style.cursor = ''
+    }
+    view.addEventListener('pointerup', endDrag)
+    view.addEventListener('pointercancel', endDrag)
+
+    /* ---------- 主轨抽帧：canvas 胶片条 ---------- */
+    const SLOT_W = 56
+    const STRIP_H = 56
+    const FPS = 30
+    let slotFrames: (HTMLCanvasElement | HTMLImageElement | null)[] = []
+    let slotTimes: number[] = []
+    let slotCount = 0
+    let totalFrames = 1
+    let selFrame = 0
+    let stripTask = 0
+
+    function mainItemAt(t: number) {
+      return (
+        items.find(it => t >= it.start && t < it.start + it.duration) ??
+        items[items.length - 1] ??
+        null
+      )
+    }
+
+    async function frameAt(t: number): Promise<HTMLCanvasElement | HTMLImageElement | null> {
+      const it = mainItemAt(t)
+      if (!it) return null
+      const url = (it.source as { url?: string }).url
+      if (!url) return null
+      const srcDur = (it.source as { duration?: number }).duration
+      let at = (it.sourceStart ?? 0) + Math.max(0, t - it.start)
+      if (typeof srcDur === 'number' && Number.isFinite(srcDur) && srcDur > 0) {
+        at = Math.min(at, Math.max(0, srcDur - 0.02))
+      }
+      if (it.type === 'video') return mediabunnyFrameCanvas(url, at)
+      try {
+        return await loadImageEl(url)
+      } catch {
+        return null
+      }
+    }
+
+    function drawStrip() {
+      const dpr = Math.min(2, window.devicePixelRatio || 1)
+      const cssW = strip.clientWidth || 660
+      if (strip.width !== Math.round(cssW * dpr)) {
+        strip.width = Math.round(cssW * dpr)
+        strip.height = Math.round(STRIP_H * dpr)
+      }
+      const ctx = strip.getContext('2d')
+      if (!ctx) return
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+      ctx.clearRect(0, 0, cssW, STRIP_H)
+      ctx.fillStyle = '#101012'
+      ctx.fillRect(0, 0, cssW, STRIP_H)
+      for (let i = 0; i < slotCount; i++) {
+        const x = i * SLOT_W
+        if (x > cssW) break
+        const f = slotFrames[i]
+        if (f) {
+          const fw = f instanceof HTMLCanvasElement ? f.width : f.naturalWidth
+          const fh = f instanceof HTMLCanvasElement ? f.height : f.naturalHeight
+          const sc = Math.max(SLOT_W / fw, STRIP_H / fh)
+          const dw = fw * sc
+          const dh = fh * sc
+          ctx.save()
+          ctx.beginPath()
+          ctx.rect(x, 0, SLOT_W, STRIP_H)
+          ctx.clip()
+          ctx.drawImage(f, x + (SLOT_W - dw) / 2, (STRIP_H - dh) / 2, dw, dh)
+          ctx.restore()
+        } else {
+          ctx.fillStyle = '#1b1b1f'
+          ctx.fillRect(x + 1, 2, SLOT_W - 2, STRIP_H - 4)
+        }
+      }
+      // 黄色播放头：位置 = 选中帧 / 主轨总帧数（纯线条）
+      const px = totalFrames > 1 ? (selFrame / (totalFrames - 1)) * (cssW - 1) : 0
+      ctx.strokeStyle = '#f5d127'
+      ctx.lineWidth = 1.5
+      ctx.beginPath()
+      ctx.moveTo(px, 0)
+      ctx.lineTo(px, STRIP_H)
+      ctx.stroke()
+    }
+
+    async function buildStrip() {
+      const task = ++stripTask
+      const cssW = strip.clientWidth || 660
+      slotCount = Math.max(1, Math.floor(cssW / SLOT_W))
+      totalFrames = Math.max(1, Math.round(trackDur * FPS))
+      slotTimes = Array.from({ length: slotCount }, (_, i) => ((i + 0.5) * trackDur) / slotCount)
+      slotFrames = new Array(slotCount).fill(null)
+      drawStrip()
+      for (let i = 0; i < slotCount; i++) {
+        if (task !== stripTask) return
+        const f = await frameAt(slotTimes[i])
+        if (task !== stripTask) return
+        slotFrames[i] = f
+        drawStrip()
+      }
+    }
+
+    async function selectFrame(n: number) {
+      selFrame = Math.min(totalFrames - 1, Math.max(0, Math.round(n)))
+      drawStrip()
+      const task = ++stripTask
+      const f = await frameAt(selFrame / FPS)
+      if (task !== stripTask) return
+      if (!f) {
+        if (hintEl) hintEl.textContent = '该帧取图失败'
+        return
+      }
+      const dataUrl = f instanceof HTMLCanvasElement ? f.toDataURL('image/jpeg', 0.92) : f.src
+      try {
+        const img = await loadImageEl(dataUrl)
+        setSource(img)
+      } catch {
+        if (hintEl) hintEl.textContent = '取图失败'
+      }
+    }
+
+    /* ---------- 胶片条选帧：按横向位置换算成帧号 ---------- */
+    let stripDrag = false
+    let stripMoveTimer = 0
+    function frameAtX(clientX: number) {
+      const r = strip.getBoundingClientRect()
+      const ratio = Math.min(1, Math.max(0, (clientX - r.left) / Math.max(1, r.width)))
+      return Math.round(ratio * (totalFrames - 1))
+    }
+    strip.addEventListener('pointerdown', e => {
+      if (strip.style.display === 'none') return
+      stripDrag = true
+      strip.setPointerCapture?.(e.pointerId)
+      void selectFrame(frameAtX(e.clientX))
+    })
+    strip.addEventListener('pointermove', e => {
+      if (!stripDrag) return
+      selFrame = frameAtX(e.clientX)
+      drawStrip()
+      if (stripMoveTimer) window.clearTimeout(stripMoveTimer)
+      stripMoveTimer = window.setTimeout(() => {
+        stripMoveTimer = 0
+        void selectFrame(selFrame)
+      }, 80)
+    })
+    const endStrip = () => {
+      stripDrag = false
+      if (stripMoveTimer) {
+        window.clearTimeout(stripMoveTimer)
+        stripMoveTimer = 0
+        void selectFrame(selFrame)
+      }
+    }
+    strip.addEventListener('pointerup', endStrip)
+    strip.addEventListener('pointercancel', endStrip)
+
+    /* ---------- 模式切换 ---------- */
+    const modeBtns = Array.from(mask.querySelectorAll<HTMLButtonElement>('[data-mode]'))
+    function setMode(next: 'frame' | 'upload') {
+      mode = next
+      for (const b of modeBtns) b.classList.toggle('is-on', b.dataset.mode === next)
+      syncTools()
+      if (next === 'frame') {
+        strip.style.display = ''
+        if (items.length > 0) {
+          void buildStrip().then(() => selectFrame(selFrame))
+        } else {
+          if (hintEl) hintEl.textContent = '主轨暂无素材，可改用上传封面'
+        }
+      } else {
+        strip.style.display = 'none'
+        if (!src && hintEl) hintEl.textContent = '点「上传图片」选择本地图片'
+      }
+    }
+    for (const b of modeBtns) {
+      b.addEventListener('click', () => setMode(b.dataset.mode as 'frame' | 'upload'))
+    }
+
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files?.[0]
+      if (!file) return
+      const objUrl = URL.createObjectURL(file)
+      loadImageEl(objUrl)
+        .then(img => setSource(img))
+        .catch(() => toast('图片读取失败'))
+        .finally(() => window.setTimeout(() => URL.revokeObjectURL(objUrl), 0))
+    })
+
+    function applyCover(dataUrl: string | null) {
+      if (!dataUrl) {
+        toast('请先在取景框内选择封面区域')
+        return
+      }
       coverImage = dataUrl
       editorStorage.saveCover({ image: dataUrl })
       tlHandle?.setCover(dataUrl)
@@ -1565,58 +2235,60 @@ export function createEditorPage(
       close()
     }
 
+    function close() {
+      stripTask++
+      if (stripMoveTimer) window.clearTimeout(stripMoveTimer)
+      mask.remove()
+      document.removeEventListener('keydown', onKey)
+    }
+    function onKey(e: KeyboardEvent) {
+      // 只允许「取消」关闭弹窗，Esc 不生效
+      if (e.key === 'Escape') e.preventDefault()
+    }
+
     mask.addEventListener('click', e => {
       const target = e.target as HTMLElement
-      if (target === mask) {
-        close()
-        return
-      }
       const act = target.closest<HTMLElement>('[data-act]')?.dataset.act
-      if (!act) return
-      if (act === 'close') {
-        close()
-      } else if (act === 'upload') {
-        fileInput.click()
-      } else if (act === 'frame' && firstItem) {
-        const src = firstItem.source as { url?: string }
-        if (!src.url) {
-          toast('该素材无可截取的画面')
+      if (act === 'cancel') close()
+      else if (act === 'upload') fileInput.click()
+      else if (act === 'apply') applyCover(croppedUrl || cropDataUrl())
+      else if (act === 'finish') {
+        // 完成裁剪：截取取景框区域 → 作为新的封面图放回大 canvas → 进入撤销历史
+        if (!src || !cropping) return
+        const cv = cropCanvas()
+        if (!cv) {
+          toast('请先在取景框内选择封面区域')
           return
         }
-        const busy = '截取中…'
-        const sub = frameBtn.querySelector<HTMLElement>('.ed-cover-opt-sub')!
-        const origin = sub.textContent
-        frameBtn.disabled = true
-        sub.textContent = busy
-        const done = () => {
-          frameBtn.disabled = false
-          sub.textContent = origin
+        shotCanvas = cv
+        croppedUrl = cv.toDataURL('image/jpeg', 0.92)
+        pushShot(cv)
+        clip = { x: 0, y: 0, w: 0, h: 0 }
+        cropping = false
+        layoutImage()
+        paintClip()
+        toast('裁剪完成')
+      } else if (act === 'crop') {
+        // 点「裁剪」才显示取景框（同参考 cutImage），随后拖动 / 四角缩放选择区域
+        if (!src) {
+          toast('请先选择一帧或上传图片')
+          return
         }
-        if (firstItem.type === 'video') {
-          captureVideoCover(src.url, firstItem.sourceStart ?? 0)
-            .then(applyCover)
-            .catch(() => toast('主轨首帧截取失败'))
-            .finally(done)
-        } else {
-          // 图片 / GIF：取静态首帧（canvas 绘制 GIF 时浏览器画第 1 帧）
-          loadImageEl(src.url)
-            .then(img => applyCover(squareCoverDataUrl(img, img.naturalWidth, img.naturalHeight)))
-            .catch(() => toast('封面图片读取失败'))
-            .finally(done)
-        }
+        cropping = true
+        croppedUrl = null
+        clip = clampClip(clip.w ? clip : defaultClip())
+        paintClip()
+      } else if (act === 'undo') {
+        if (shotIdx > 0) showShot(shotIdx - 1)
+      } else if (act === 'redo') {
+        if (shotIdx < shots.length - 1) showShot(shotIdx + 1)
       }
-    })
-    fileInput.addEventListener('change', () => {
-      const file = fileInput.files?.[0]
-      if (!file) return
-      const objUrl = URL.createObjectURL(file)
-      loadImageEl(objUrl)
-        .then(img => applyCover(squareCoverDataUrl(img, img.naturalWidth, img.naturalHeight)))
-        .catch(() => toast('图片读取失败'))
-        .finally(() => URL.revokeObjectURL(objUrl))
     })
     document.addEventListener('keydown', onKey)
     rootEl.appendChild(mask)
+    sizeView()
+    syncHistoryBtns()
+    setMode('frame')
   }
 
   createTimelineTrack($<HTMLElement>('track'), trackObjects, {
@@ -2068,12 +2740,17 @@ export function createEditorPage(
     try {
       const cw = Math.max(2, Math.round(detailData.canvasW || 1080))
       const ch = Math.max(2, Math.round(detailData.canvasH || 1920))
+      // 封面 → MP4 元信息（covr 封面图 + 标题），不占用首帧；
+      // 转换失败（图片解码异常等）只会让成片没有封面，不影响导出本身
+      const coverMeta = coverImage ? await coverImageToMetaJpeg(coverImage) : null
       const buffer = await playerStage.exportVideo({
         width: cw - (cw % 2),
         height: ch - (ch % 2),
         fps: TIMELINE_FPS,
         onProgress: setProgress,
-        signal
+        signal,
+        cover: coverMeta,
+        title: detailData.title
       })
 
       const blob = new Blob([buffer], { type: 'video/mp4' })

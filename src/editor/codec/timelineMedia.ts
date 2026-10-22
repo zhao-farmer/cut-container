@@ -15,6 +15,7 @@
 import { Input, ALL_FORMATS, UrlSource, AudioBufferSink } from 'mediabunny'
 import { FrameExtractor } from './timelineFrameExtractor'
 import { bakeCover } from './timelineBakeCover'
+import { retireTexture } from '../utils/textureRefs'
 
 /** 缩略格逻辑宽度（px），与参考实现的 trackMediaWidth 一致 */
 export const CELL_W = 46
@@ -155,7 +156,8 @@ class VideoMedia {
       if (oldestKey && oldestKey !== key) {
         const old = this.frames.get(oldestKey)!
         this.frames.delete(oldestKey)
-        this.safeDestroyTex(old.tex)
+        // 纹理可能仍被屏幕上的 ClipView 精灵引用：只退役，引用归零后才真正销毁
+        retireTexture(old.tex)
       }
     }
   }
@@ -217,6 +219,8 @@ class VideoMedia {
     this.cellQueue = []
     this.frames.forEach(f => this.safeDestroyTex(f.tex))
     this.frames.clear()
+    // 释放无 WebGPU 路径缓存的 <video> 元素
+    this.extractor.destroy()
     const input = this.input
     if (input) {
       Promise.resolve()
@@ -554,11 +558,8 @@ class GifMedia {
       if (oldestKey && oldestKey !== key) {
         const old = this.frames.get(oldestKey)!
         this.frames.delete(oldestKey)
-        try {
-          old.tex.destroy(true)
-        } catch {
-          /* noop */
-        }
+        // 同视频格：可能仍被屏幕上的 ClipView 精灵引用，退役而非立即销毁
+        retireTexture(old.tex)
       }
     }
   }

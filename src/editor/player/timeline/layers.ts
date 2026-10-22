@@ -98,7 +98,7 @@ export function LayersMixin<TBase extends AbstractCtor<PlayerBase>>(Base: TBase)
         canvas.width = w
         canvas.height = h
         const ctx = canvas.getContext('2d')!
-        const source = new PIXI.CanvasSource({ resource: canvas, scaleMode: PIXI.SCALE_MODES.LINEAR })
+        const source = new PIXI.CanvasSource({ resource: canvas, scaleMode: 'linear' })
         const texture = new PIXI.Texture({ source })
         const sprite = new PIXI.Sprite(texture)
         sprite.anchor.set(0.5)
@@ -125,7 +125,7 @@ export function LayersMixin<TBase extends AbstractCtor<PlayerBase>>(Base: TBase)
       if (e.natW !== w || e.natH !== h) {
         e.canvas.width = w
         e.canvas.height = h
-        const source = new PIXI.CanvasSource({ resource: e.canvas, scaleMode: PIXI.SCALE_MODES.LINEAR })
+        const source = new PIXI.CanvasSource({ resource: e.canvas, scaleMode: 'linear' })
         const texture = new PIXI.Texture({ source })
         e.sprite.texture = PIXI.Texture.EMPTY
         e.texture.destroy(true)
